@@ -1,0 +1,53 @@
+import { test, expect } from '@playwright/test';
+import { readFile } from 'node:fs/promises';
+test.beforeEach(async ({ page }) => {
+  const html = (await readFile('index.html', 'utf8')).replace('/src/main.ts', '/tests/ui-harness.js');
+  await page.route('http://127.0.0.1:1420/', route => route.fulfill({ body: html, contentType: 'text/html' }));
+  await page.goto('/');
+  await expect(page.locator('.tab')).toHaveCount(1);
+});
+test('new SSH configuration carries ProxyJump and explicit agent authentication', async ({ page }) => {
+  await page.evaluate(async () => { const module = await import('/src/profiles.ts'); module.showNewSshDialog(); });
+  await page.locator('#f-host').fill('target.invalid'); await page.locator('#f-user').fill('deploy');
+  await page.locator('#f-proxy-jump').fill('bastion,admin@second:2222');
+  await page.locator('#f-auth').selectOption('agent');
+  await page.locator('#f-ok').click();
+  await expect.poll(() => page.evaluate(() => window.testState.calls.find(call => call.command === 'spawn_ssh')?.args.proxyJump)).toBe('bastion,admin@second:2222');
+  expect(await page.evaluate(() => window.testState.calls.find(call => call.command === 'spawn_ssh')?.args.auth)).toBe('agent');
+});
+test('SFTP queue pauses, resumes, cancels and retries with fixed paths', async ({ page }) => {
+  await page.evaluate(async () => { await (await import('/src/sftp.ts')).openFor('remote-a'); });
+  await expect(page.locator('.sftp-item')).toHaveCount(1);
+  await page.locator('#sp-upload').click();
+  const row = page.locator('.transfer-row').first();
+  await expect(row).toHaveAttribute('data-status', 'running');
+  await row.getByRole('button', { name: '暂停', exact: true }).click();
+  await expect(row).toHaveAttribute('data-status', 'paused');
+  await row.getByRole('button', { name: '继续', exact: true }).click();
+  await expect(row).toHaveAttribute('data-status', 'running');
+  await page.screenshot({ path: 'test-results/sftp-queue.png' });
+  await row.getByRole('button', { name: '取消', exact: true }).click();
+  await expect(row).toHaveAttribute('data-status', 'cancelled');
+  page.once('dialog', dialog => dialog.accept());
+  await row.getByRole('button', { name: '重新传输', exact: true }).click();
+  await expect(page.locator('.transfer-row')).toHaveCount(2);
+  await expect(page.locator('.transfer-row').last()).toHaveAttribute('data-status', 'running');
+  const calls = await page.evaluate(() => window.testState.calls.filter(call => call.command === 'sftp_transfer').map(call => call.args));
+  expect(calls[0].remote).toBe('/home/remote-a/upload.bin'); expect(calls[1].remote).toBe(calls[0].remote);
+  expect(calls[1].transferId).not.toBe(calls[0].transferId); expect(calls[1].overwrite).toBe(true);
+});
+test('SFTP switching sessions isolates queue, follows reported directories and changes permissions', async ({ page }) => {
+  await page.evaluate(async () => { await (await import('/src/sftp.ts')).openFor('remote-a'); });
+  await page.locator('#sp-upload').click();
+  await expect(page.locator('.transfer-row')).toHaveAttribute('data-status', 'running');
+  await page.evaluate(async () => { await (await import('/src/sftp.ts')).openFor('remote-b'); });
+  await expect(page.locator('.transfer-row')).toHaveCount(0);
+  await page.locator('#sp-follow').check();
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent('wterm-cwd', { detail: { sid: 'remote-b', path: '/srv/project' } })));
+  await expect(page.locator('#sp-path')).toHaveText('/srv/project');
+  page.once('dialog', dialog => dialog.accept('640'));
+  await page.getByTitle('修改权限', { exact: true }).click();
+  await expect.poll(() => page.evaluate(() => window.testState.calls.find(call => call.command === 'sftp_chmod')?.args.mode)).toBe(0o640);
+  await page.evaluate(async () => { await (await import('/src/sftp.ts')).openFor('remote-a'); });
+  await expect(page.locator('.transfer-row')).toHaveAttribute('data-status', 'running');
+});

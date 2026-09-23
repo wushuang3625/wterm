@@ -1,0 +1,24 @@
+# 依赖
+node_modules/
+
+# 前端构建产物
+dist/
+
+# Rust 构建产物
+src-tauri/target/
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
+
+# 系统
+.DS_Store
+Thumbs.db
+
+# 日志
+*.log
+
+# 浏览器测试产物
+test-results/
+playwright-report/

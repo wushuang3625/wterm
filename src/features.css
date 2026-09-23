@@ -1,0 +1,192 @@
+html, body { width: 100%; height: 100%; margin: 0; background: transparent; }
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image: var(--wterm-background-image, none);
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+  opacity: var(--wterm-background-image-opacity, .22);
+}
+#app { position: relative; z-index: 1; width: 100%; height: 100%; background: var(--bg); }
+html.wterm-transparent #app {
+  background: color-mix(in srgb, var(--bg) calc(var(--wterm-surface-opacity, 1) * 100%), transparent);
+}
+html.wterm-transparent .titlebar,
+html.wterm-transparent .pane-toolbar,
+html.wterm-transparent .command-palette,
+html.wterm-transparent .menu-dropdown,
+html.wterm-transparent .dialog,
+html.wterm-transparent .settings-card {
+  background: color-mix(in srgb, var(--bg-panel) calc(var(--wterm-surface-opacity, 1) * 100%), transparent);
+}
+html.wterm-transparent .terminal-area { background: transparent; }
+
+.profile-tree-dialog { width: min(760px, 92vw); }
+.profile-tree-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+.profile-tree-root {
+  min-height: 240px;
+  max-height: min(62vh, 560px);
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+}
+.profile-tree-drop-root {
+  margin-bottom: 8px;
+  padding: 8px 10px;
+  border: 1px dashed var(--border);
+  border-radius: 7px;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+.profile-tree-group { margin: 3px 0; }
+.profile-tree-group > summary {
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 8px;
+  border-radius: 6px;
+  color: var(--text);
+  cursor: pointer;
+  list-style: none;
+  font-size: 12px;
+  font-weight: 600;
+}
+.profile-tree-group > summary::before { content: "▸"; width: 12px; color: var(--text-dim); }
+.profile-tree-group[open] > summary::before { content: "▾"; }
+.profile-tree-group > summary::-webkit-details-marker { display: none; }
+.profile-tree-group > summary:hover,
+.profile-tree-group > summary.drag-over,
+.profile-tree-drop-root.drag-over { background: var(--bg-hover); border-color: var(--accent); }
+.profile-tree-children {
+  margin-left: 13px;
+  padding-left: 10px;
+  border-left: 1px solid var(--border);
+}
+.profile-tree-profile {
+  width: 100%;
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 2px 0;
+  padding: 6px 9px 6px 12px;
+  border: 0;
+  border-left: 3px solid var(--profile-color, transparent);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  cursor: grab;
+  text-align: left;
+}
+.profile-tree-profile:hover { background: var(--bg-hover); }
+.profile-tree-profile.dragging { opacity: .45; }
+.profile-tree-name { flex: 0 1 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 600; }
+.profile-tree-detail { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-dim); font: 10.5px "Cascadia Code", Consolas, monospace; }
+
+.settings-card-title { margin-bottom: 8px; color: var(--text); font-size: 13px; font-weight: 600; }
+.settings-inline-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.setting-check.compact { margin-top: 8px; color: var(--text-dim); font-size: 11px; }
+.btn.danger { color: var(--red); border-color: color-mix(in srgb, var(--red) 65%, var(--border)); }
+.appearance-card .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+@media (max-width: 640px) {
+  .profile-tree-toolbar { align-items: stretch; flex-direction: column; }
+  .appearance-card .field-row { grid-template-columns: 1fr; }
+}
+.dialog.settings-dialog {
+  width: min(960px, calc(100vw - 40px));
+  max-width: none;
+  height: min(820px, calc(100dvh - 40px));
+  max-height: calc(100dvh - 40px);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.settings-dialog > h2 { flex: none; margin: 0; padding: 22px 26px; font-size: 20px; }
+.settings-dialog .settings-modal { flex: 1; min-height: 0; margin: 0; overflow: hidden; }
+.settings-dialog .settings-sidebar { width: 178px; padding: 16px 12px; }
+.settings-dialog .settings-nav-item { min-height: 40px; padding: 10px 12px; }
+.settings-dialog .settings-content { min-width: 0; max-height: none; padding: 24px 28px; scrollbar-gutter: stable; }
+.settings-dialog .settings-title { margin: 0 0 22px; font-size: 17px; }
+.settings-dialog .settings-card { padding: 20px; margin: 20px 0; }
+.settings-dialog .settings-card-title { margin-bottom: 18px; font-size: 14px; }
+.settings-dialog .field { min-width: 0; margin-bottom: 18px; }
+.settings-dialog .field:last-child { margin-bottom: 0; }
+.settings-dialog .field label { font-size: 13px; line-height: 1.5; margin-bottom: 8px; }
+.settings-dialog .field input:not([type=checkbox]),
+.settings-dialog .field select,
+.settings-dialog .shortcut-input {
+  box-sizing: border-box; min-width: 0; height: 38px; padding: 8px 11px;
+  border: 1px solid var(--border); border-radius: 7px;
+  background: var(--bg); color: var(--text);
+  font-family: inherit; font-size: 13px; line-height: 1.5; letter-spacing: normal;
+  outline: none;
+}
+.settings-dialog input[type=number] { appearance: textfield; -moz-appearance: textfield; }
+.settings-dialog input[type=number]::-webkit-inner-spin-button,
+.settings-dialog input[type=number]::-webkit-outer-spin-button { appearance: none; -webkit-appearance: none; margin: 0; }
+.settings-dialog input:focus-visible, .settings-dialog select:focus-visible,
+.settings-dialog button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.settings-dialog .field-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.settings-dialog .typography-values { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.settings-dialog .typography-values .field { margin-bottom: 0; }
+.font-combobox { position: relative; }
+.settings-dialog .font-combobox input { padding-right: 34px; }
+.combobox-caret {
+  position: absolute; top: 1px; right: 1px; bottom: 1px; width: 30px;
+  display: flex; align-items: center; justify-content: center; padding: 0;
+  border: 0; border-radius: 0 6px 6px 0; background: transparent;
+  color: var(--text-dim); font-size: 10px; line-height: 1; cursor: pointer;
+}
+.combobox-caret:hover { background: var(--bg-hover); color: var(--text); }
+.combobox-list {
+  position: fixed; z-index: 20; margin: 0; padding: 4px; list-style: none;
+  max-height: 184px; overflow-y: auto;
+  background: var(--bg-panel); border: 1px solid var(--border); border-radius: 7px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+}
+.combobox-list li {
+  padding: 7px 10px; border-radius: 5px;
+  font-family: inherit; font-size: 13px; line-height: 1.5; letter-spacing: normal;
+  color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  cursor: pointer;
+}
+.combobox-list li:hover, .combobox-list li.active { background: var(--bg-hover); }
+.combobox-list[hidden] { display: none; }
+.settings-dialog .setting-check { align-items: flex-start; gap: 10px; font-size: 13px; line-height: 1.6; }
+.settings-dialog input[type=checkbox] { width: 16px; height: 16px; flex: 0 0 16px; margin: 3px 0 0; accent-color: var(--accent); }
+.settings-dialog .setting-hint { display: block; font-size: 12px; line-height: 1.5; margin: 6px 0 0; color: var(--text-dim); overflow-wrap: anywhere; }
+.settings-dialog .field > .setting-hint { margin-top: 6px; margin-bottom: 0; }
+.settings-dialog .field-row > .field > .setting-hint { margin-top: 6px; margin-bottom: 0; }
+.settings-dialog .typography-values .setting-hint { margin-top: 6px; margin-bottom: 0; }
+.settings-dialog .log-color-legend { display: flex; flex-wrap: wrap; gap: 16px; margin: 0 0 20px; font-size: 12px; font-weight: 600; }
+.log-info { color: var(--green); } .log-warn { color: var(--yellow); }
+.log-error { color: var(--red); } .log-debug { color: var(--accent); }
+.settings-dialog .shortcut-item { gap: 20px; padding: 10px 14px; }
+.settings-dialog .shortcut-item .desc { min-width: 0; line-height: 1.6; }
+.settings-dialog .shortcut-input { width: 190px; flex: 0 0 190px; }
+.settings-dialog #cfg-reset-shortcuts { margin-top: 18px; }
+.settings-dialog > .dialog-actions { flex: none; margin: 0 !important; padding: 16px 26px; background: var(--bg-panel); }
+.settings-dialog .btn { min-height: 36px; }
+@media (max-width: 700px) {
+  .dialog.settings-dialog { width: calc(100vw - 20px); height: calc(100dvh - 20px); max-height: calc(100dvh - 20px); }
+  .settings-dialog .settings-sidebar { width: 136px; padding: 12px 8px; }
+  .settings-dialog .settings-content { padding: 18px 16px; }
+  .settings-dialog .settings-card { padding: 16px; }
+  .settings-dialog .field-row { grid-template-columns: minmax(0, 1fr); }
+  .settings-dialog .shortcut-item { flex-direction: column; align-items: stretch; gap: 8px; }
+  .settings-dialog .shortcut-input { width: 100%; flex: none; }
+}
