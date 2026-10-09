@@ -1,9 +1,10 @@
+import { configStorage } from './config-storage';
 import { invoke } from "@tauri-apps/api/core";
 
 export type CredentialKind = "password" | "passphrase";
 
 export async function loadCredential(kind: CredentialKind, key: string): Promise<string | undefined> {
-  if (!key || localStorage.getItem("wterm_keychain_enabled") === "false") return;
+  if (!key || configStorage.getItem("wterm_keychain_enabled") === "false") return;
   try {
     return (await invoke<string | null>("credential_get", { kind, key })) ?? undefined;
   } catch (error) {
@@ -13,7 +14,7 @@ export async function loadCredential(kind: CredentialKind, key: string): Promise
 }
 
 export async function saveCredential(kind: CredentialKind, key: string, value: string): Promise<void> {
-  if (!key || !value || localStorage.getItem("wterm_keychain_enabled") === "false") return;
+  if (!key || !value || configStorage.getItem("wterm_keychain_enabled") === "false") return;
   await invoke("credential_set", { kind, key, value });
 }
 

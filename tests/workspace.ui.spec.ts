@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 
 test.beforeEach(async ({ page }) => {
-  const html = (await readFile('index.html', 'utf8')).replace('/src/main.ts', '/tests/ui-harness.js');
+  const html = (await readFile('index.html', 'utf8')).replace('/src/bootstrap.ts', '/tests/ui-harness.js');
   await page.route('http://127.0.0.1:1420/', route => route.fulfill({ body: html, contentType: 'text/html' }));
   await page.goto('/');
   await expect(page.locator('.tab')).toHaveCount(1);
@@ -211,6 +211,27 @@ test('settings switch built-in theme and shortcut preset', async ({ page }) => {
   expect(saved.shortcuts.commandPalette).toBe('Ctrl+Shift+P');
 });
 
+test('reading themes preview terminal colors and keep default log colors adaptive', async ({ page }) => {
+  await page.locator('#btn-app-menu').click();
+  await page.locator('#btn-settings').click();
+  await page.locator('#cfg-theme').selectOption('eye-green');
+  expect(await page.evaluate(async () => (await import('/src/themes.ts')).getTerminalTheme().background)).toBe('#e2eee1');
+  await expect(page.locator('.log-rule').first().locator('input[type=color]').first()).toHaveValue('#924b3d');
+  await page.locator('#cfg-reading-preset').click();
+  await expect(page.locator('#cfg-font-size')).toHaveValue('16');
+  await expect(page.locator('#cfg-line-height')).toHaveValue('1.4');
+  await expect(page.locator('#cfg-font-preview')).toHaveCSS('font-size', '16px');
+  await page.locator('#cfg-save').click();
+  expect(await page.evaluate(() => localStorage.getItem('wterm_log_color_rules'))).toBeNull();
+
+  await page.locator('#btn-app-menu').click();
+  await page.locator('#btn-settings').click();
+  await page.locator('#cfg-theme').selectOption('warm-paper');
+  await expect(page.locator('.log-rule').first().locator('input[type=color]').first()).toHaveValue('#9e4936');
+  await page.locator('#cfg-cancel').click();
+  expect(await page.evaluate(async () => (await import('/src/themes.ts')).getTerminalTheme().background)).toBe('#e2eee1');
+});
+
 test('unknown SSH host key requires explicit fingerprint confirmation', async ({ page }) => {
   await page.evaluate(async () => {
     const { createHostKeyChannel } = await import('/src/hostkey.ts');
@@ -323,6 +344,17 @@ test('smart link provider detects URLs and directory paths, and ctrl+click trigg
       )
     )
   ).toBe(true);
+
+  const openErrors: string[] = [];
+  page.once('dialog', async dialog => {
+    openErrors.push(dialog.message());
+    await dialog.accept();
+  });
+  await page.evaluate(() => {
+    (window as any).testState.openPathError = '路径不存在';
+    (window as any).testLinks[1].activate({ ctrlKey: true, metaKey: false, clientX: 100, clientY: 100 });
+  });
+  await expect.poll(() => openErrors[0]).toContain('打开本地路径失败: Error: 路径不存在');
 });
 
 
@@ -352,7 +384,7 @@ test('smart link provider detects URLs and directory paths, and ctrl+click trigg
   expect(items.indexOf('新建自定义 SSH')).toBeLessThan(items.indexOf('本地终端'));
  });
 
-test('log colors preserve original text and ANSI and skip alternate screen', async ({ page }) => {
+test('log color rules paint whole rows, save custom colors, and skip alternate screen', async ({ page }) => {
  await expect(page.locator('.tab .dot.connected')).toHaveCount(1);
  await page.evaluate(async () => {
   const sid = (document.querySelector('.tab') as HTMLElement).dataset.sid;
@@ -366,14 +398,37 @@ test('log colors preserve original text and ANSI and skip alternate screen', asy
  await page.locator('#btn-app-menu').click(); await page.locator('#btn-settings').click();
  await page.locator('#cfg-log-colors').check(); await page.locator('#cfg-save').click();
  await expect.poll(() => page.locator('.xterm-decoration').count()).toBeGreaterThan(0);
+ const previousCount = await page.locator('.xterm-decoration').count();
+ await page.locator('#btn-app-menu').click(); await page.locator('#btn-settings').click();
+ await page.locator('#cfg-add-log-rule').click();
+ const custom = page.locator('.log-rule').last();
+ await custom.locator('.log-rule-pattern').fill('CUSTOM_MARKER');
+ await custom.getByLabel('前景色').fill('#ff00ff');
+ await custom.getByLabel('启用背景色').check();
+ await custom.locator('input[type=color]').last().fill('#123456');
+ await page.locator('#cfg-save').click();
+ await page.evaluate(async () => { await (window as any).emitPty((document.querySelector('.tab') as HTMLElement).dataset.sid, 'CUSTOM_MARKER whole row\r\n'); });
+ await expect.poll(() => page.locator('.xterm-decoration').count()).toBeGreaterThan(previousCount);
+ expect(await page.locator('.xterm-decoration').last().evaluate(el => el.getBoundingClientRect().width)).toBeGreaterThan(100);
+ expect(await page.evaluate(() => JSON.parse(localStorage.getItem('wterm_log_color_rules') || '[]').at(-1))).toMatchObject({ pattern: 'CUSTOM_MARKER', foreground: '#ff00ff', background: '#123456' });
+ await page.locator('#btn-app-menu').click(); await page.locator('#btn-settings').click();
+ await expect(page.locator('.log-rule').last().locator('.log-rule-pattern')).toHaveValue('CUSTOM_MARKER');
+ await page.locator('#cfg-cancel').click();
  await page.evaluate(async () => { await (window as any).emitPty((document.querySelector('.tab') as HTMLElement).dataset.sid, '\x1b[?1049hERROR alternate'); });
  await expect(page.locator('.xterm-decoration')).toHaveCount(0);
 });
 
 test('settings keep typography fields and actions usable at desktop and small widths', async ({ page }) => {
- for (const width of [1100, 650]) {
-  await page.setViewportSize({ width, height: 760 });
+ for (const { width, height } of [{ width: 1142, height: 889 }, { width: 650, height: 760 }]) {
+  await page.setViewportSize({ width, height });
   await page.locator('#btn-app-menu').click(); await page.locator('#btn-settings').click();
+  const geometry = await page.locator('.settings-dialog').evaluate(dialog => {
+   const content = dialog.querySelector('.settings-content') as HTMLElement;
+   const footer = dialog.querySelector('.dialog-actions') as HTMLElement;
+   return { contentBottom: content.getBoundingClientRect().bottom, footerTop: footer.getBoundingClientRect().top, contentHeight: content.clientHeight };
+  });
+  expect(geometry.footerTop - geometry.contentBottom).toBeLessThan(4);
+  expect(geometry.contentHeight).toBeGreaterThan(450);
   await page.locator('#cfg-theme').selectOption('gruvbox-dark');
   await page.locator('#cfg-font-family').scrollIntoViewIfNeeded();
   const card = page.locator('.typography-card');
@@ -383,6 +438,8 @@ test('settings keep typography fields and actions usable at desktop and small wi
   }
   await expect(page.locator('#cfg-save')).toBeInViewport();
   await page.screenshot({ path: 'test-results/settings-' + width + '.png' });
+  await page.locator('#cfg-settings-path').scrollIntoViewIfNeeded();
+  await expect(page.locator('#cfg-settings-path')).toBeInViewport();
   await page.locator('[data-tab="shortcuts"]').click();
   await expect(page.locator('.shortcut-input').first()).toBeVisible();
   await page.screenshot({ path: 'test-results/shortcuts-' + width + '.png' });

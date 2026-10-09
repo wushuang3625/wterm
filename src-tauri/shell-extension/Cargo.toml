@@ -1,0 +1,17 @@
+[package]
+name = "wterm-shell"
+version = "0.1.5"
+edition = "2021"
+rust-version = "1.89"
+
+[lib]
+crate-type = ["cdylib"]
+name = "wterm_shell"
+
+[dependencies]
+windows-core = "0.61.2"
+windows = { version = "0.61.3", features = ["Win32_Foundation", "Win32_System_Com", "Win32_System_Ole", "Win32_System_LibraryLoader", "Win32_System_SystemServices", "Win32_UI_Shell", "Win32_UI_Shell_Common"] }
+
+[profile.release]
+panic = "abort"
+strip = true

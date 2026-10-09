@@ -1,0 +1,12 @@
+{
+  "bundle": {
+    "resources": {
+      "windows/generated/wterm_shell.dll": "wterm_shell.dll",
+      "windows/generated/AppxManifest.xml": "AppxManifest.xml",
+      "windows/generated/wterm-explorer.msix": "wterm-explorer.msix",
+      "windows/generated/Assets/": "Assets/",
+      "windows/Register-ExplorerIntegration.ps1": "Register-ExplorerIntegration.ps1"
+    },
+    "windows": { "nsis": { "installerHooks": "windows/installer-hooks.nsh" } }
+  }
+}

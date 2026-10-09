@@ -1,3 +1,4 @@
+import { configStorage } from './config-storage';
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { TransferQueue, type Transfer, type TransferProgress } from "./transfer-queue";
@@ -47,7 +48,7 @@ let navigation = 0;
 let panelEpoch = 0;
 let queueEl: HTMLElement | null = null;
 let queueListening: Promise<UnlistenFn> | undefined;
-let queueCollapsed = localStorage.getItem("wterm_sftp_queue_collapsed") === "true";
+let queueCollapsed = configStorage.getItem("wterm_sftp_queue_collapsed") === "true";
 let dropOverlayEl: HTMLElement | null = null;
 let activeSshSessionProvider: () => ActiveSshSession | null = () => null;
 const directories = new Map<string, string>();
@@ -83,6 +84,13 @@ function ensureQueueListener(): Promise<UnlistenFn> {
   return queueListening ??= listen<TransferProgress>("wterm-sftp-transfer", event => queue.progress(event.payload))
     .catch(error => { queueListening = undefined; throw error; });
 }
+async function openDownload(task: Transfer, reveal = false): Promise<void> {
+  if (task.direction !== "download" || task.status !== "completed" || task.busy) return;
+  task.busy = true; task.error = undefined; renderQueue();
+  try { await invoke("open_downloaded_file", { path: task.local, reveal }); }
+  catch (error) { task.error = (reveal ? "打开文件夹失败：" : "打开文件失败：") + String(error); }
+  finally { task.busy = false; renderQueue(); }
+}
 function renderQueue(): void {
   if (!queueEl) return;
   queueEl.replaceChildren();
@@ -94,7 +102,7 @@ function renderQueue(): void {
   title.setAttribute("aria-expanded", String(!queueCollapsed));
   title.onclick = () => {
     queueCollapsed = !queueCollapsed;
-    localStorage.setItem("wterm_sftp_queue_collapsed", String(queueCollapsed));
+    configStorage.setItem("wterm_sftp_queue_collapsed", String(queueCollapsed));
     renderQueue();
   };
   const clear = document.createElement("button"); clear.className = "st"; clear.textContent = "清除已结束"; clear.onclick = () => queue.clearFinished(sessionId ?? undefined);
@@ -103,7 +111,13 @@ function renderQueue(): void {
   const labels: Record<Transfer["status"], string> = { queued: "排队中", starting: "准备中", running: "传输中", paused: "已暂停", cancelling: "正在取消", completed: "已完成", cancelled: "已取消", failed: "失败" };
   for (const task of tasks) {
     const row = document.createElement("article"); row.className = "transfer-row"; row.dataset.status = task.status; row.dataset.id = task.id;
-    const name = document.createElement("div"); name.className = "transfer-name"; name.textContent = (task.direction === "upload" ? "↑ " : "↓ ") + task.name; name.title = task.local + " ↔ " + task.remote;
+    const canOpen = task.direction === "download" && task.status === "completed";
+    const name = document.createElement(canOpen ? "button" : "div"); name.className = "transfer-name"; name.textContent = (task.direction === "upload" ? "↑ " : "↓ ") + task.name; name.title = task.local + " ↔ " + task.remote;
+    if (name instanceof HTMLButtonElement) {
+      name.type = "button"; name.classList.add("transfer-open-file"); name.disabled = !!task.busy;
+      name.title = "打开文件：" + task.local; name.setAttribute("aria-label", "打开文件：" + task.name);
+      name.onclick = () => void openDownload(task);
+    }
     const status = document.createElement("div"); status.className = "sftp-transfer-status";
     status.textContent = labels[task.status] + " · " + fmtSize(task.done) + (task.total ? " / " + fmtSize(task.total) : "") + (task.status === "running" ? " · " + fmtSize(task.speed) + "/s" : "");
     const bar = document.createElement("progress"); bar.max = Math.max(task.total, task.done, 1); bar.value = task.done; bar.setAttribute("aria-label", task.name + " 传输进度");
@@ -117,6 +131,7 @@ function renderQueue(): void {
     if (["failed", "cancelled"].includes(task.status)) button("重新传输", () => {
       if (confirm("将从头重新传输并覆盖目标文件（包括已有的部分内容）。是否继续？")) queue.retry(task.id);
     });
+    if (canOpen) button("打开文件夹", () => void openDownload(task, true));
     row.append(name, status, bar, actions);
     if (task.error) { const error = document.createElement("div"); error.className = "transfer-error"; error.textContent = task.error; row.append(error); }
     if (["failed", "cancelled"].includes(task.status)) {
@@ -586,9 +601,9 @@ export function initPanel(container: HTMLElement, getActiveSshSession: () => Act
   dropOverlayEl.setAttribute("aria-hidden", "true");
   container.append(dropOverlayEl);
   const follow = panelEl.querySelector<HTMLInputElement>("#sp-follow")!;
-  follow.checked = localStorage.getItem("wterm_sftp_follow") === "true";
+  follow.checked = configStorage.getItem("wterm_sftp_follow") === "true";
   follow.onchange = () => {
-    localStorage.setItem("wterm_sftp_follow", String(follow.checked));
+    configStorage.setItem("wterm_sftp_follow", String(follow.checked));
     const path = sessionId ? directories.get(sessionId) : undefined;
     if (follow.checked && path?.startsWith("/")) void navigate(path);
   };

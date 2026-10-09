@@ -1,3 +1,4 @@
+import { configStorage } from './config-storage';
 export type FavoriteType = "directory" | "script" | "connection";
 export type FavoriteScriptEnvironment = "current" | "powershell" | "wsl" | "ssh";
 
@@ -16,7 +17,7 @@ const SCRIPT_ENVIRONMENTS: FavoriteScriptEnvironment[] = ["current", "powershell
 
 export function listFavorites(): Favorite[] {
   try {
-    const parsed: unknown = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+    const parsed: unknown = JSON.parse(configStorage.getItem(STORAGE_KEY) || "[]");
     if (!Array.isArray(parsed)) return [];
     return parsed.filter((item): item is Favorite => {
       if (
@@ -38,7 +39,7 @@ export function listFavorites(): Favorite[] {
 }
 
 function saveFavorites(items: Favorite[]): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+  configStorage.setItem(STORAGE_KEY, JSON.stringify(items));
 }
 
 export function favoriteIcon(type: FavoriteType): string {

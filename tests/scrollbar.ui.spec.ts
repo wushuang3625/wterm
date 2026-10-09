@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 
 test.beforeEach(async ({ page }) => {
-  const html = (await readFile('index.html', 'utf8')).replace('/src/main.ts', '/tests/ui-harness.js');
+  const html = (await readFile('index.html', 'utf8')).replace('/src/bootstrap.ts', '/tests/ui-harness.js');
   await page.route('http://127.0.0.1:1420/', route => route.fulfill({ body: html, contentType: 'text/html' }));
   await page.goto('/');
   await expect(page.locator('.tab .connected')).toHaveCount(1);
@@ -28,12 +28,14 @@ test('scrollbar appears with scrollback, drags, and track click scrolls', async 
     (document.querySelector('.term-pane.active .xterm-viewport') as HTMLElement).scrollTop);
 
   // 输出后滚到底部
-  const maxScroll = await pane.evaluate(() => {
+  const readMaxScroll = () => pane.evaluate(() => {
     const vp = document.querySelector('.term-pane.active .xterm-viewport') as HTMLElement;
     return vp.scrollHeight - vp.clientHeight;
   });
+  await expect.poll(readMaxScroll).toBeGreaterThan(1000);
+  const maxScroll = await readMaxScroll();
   expect(maxScroll).toBeGreaterThan(1000);
-  expect(await viewportTop()).toBe(maxScroll);
+  await expect.poll(viewportTop).toBe(maxScroll);
 
   // 拖拽滑块到轨道顶部 → 滚到最旧
   const thumb = track.locator('.term-scrollbar-thumb');
@@ -157,5 +159,40 @@ test('scrollbar thumb moves with viewport scroll and stays draggable during ongo
     (document.querySelector('.term-pane.active .xterm-viewport') as HTMLElement).scrollTop
   );
   expect(viewportTop).toBe(0);
+});
+
+test('floating scroll marker reports both edges and jumps without interrupting live output', async ({ page }) => {
+  const pane = page.locator('.term-pane:visible');
+  const marker = pane.locator('.term-scroll-navigator');
+  await expect(marker).toBeHidden();
+  await page.evaluate(async () => {
+    const sid = (window as any).__wtermSessionPrefix + '-s1';
+    await (window as any).emitPty(sid, Array.from({ length: 200 }, (_, i) => `line ${i}`).join('\r\n') + '\r\n');
+  });
+  await expect(marker).not.toHaveAttribute('hidden');
+  await expect(marker).not.toHaveClass(/visible/);
+
+  await pane.locator('.xterm-screen').hover();
+  await page.mouse.wheel(0, -720);
+  await expect(marker).toHaveClass(/visible/);
+  await marker.screenshot({ path: 'test-results/scroll-navigator.png' });
+  await page.screenshot({ path: 'test-results/scroll-navigator-page.png' });
+
+  const viewportTop = () => pane.locator('.xterm-viewport').evaluate((el: HTMLElement) => el.scrollTop);
+  const maxScroll = () => pane.locator('.xterm-viewport').evaluate((el: HTMLElement) => el.scrollHeight - el.clientHeight);
+  await marker.getByRole('button', { name: '跳到顶部' }).click();
+  await expect.poll(viewportTop).toBe(0);
+  await expect(marker.locator('.term-scroll-position')).toHaveText('已到顶部');
+  await marker.getByRole('button', { name: '跳到底部' }).click();
+  await expect.poll(async () => await viewportTop() - await maxScroll()).toBe(0);
+  await expect(marker.locator('.term-scroll-position')).toHaveText('已到底部');
+
+  await pane.locator('.xterm-screen').hover();
+  await expect(marker).not.toHaveClass(/visible/, { timeout: 4000 });
+  await page.evaluate(async () => {
+    const sid = (window as any).__wtermSessionPrefix + '-s1';
+    await (window as any).emitPty(sid, 'new live output\r\n');
+  });
+  await expect(marker).not.toHaveClass(/visible/);
 });
 

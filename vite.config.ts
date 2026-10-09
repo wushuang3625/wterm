@@ -14,5 +14,15 @@ export default defineConfig({
   build: {
     target: "es2021",
     outDir: "dist",
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          const path = id.replaceAll('\\', '/');
+          if (path.includes('/node_modules/@xterm/addon-image/')) return 'terminal-images';
+          if (path.includes('/node_modules/zmodem.js/')) return 'zmodem';
+          if (path.includes('/node_modules/@xterm/') && !path.includes('/addon-webgl/')) return 'terminal-core';
+        },
+      },
+    },
   },
 });

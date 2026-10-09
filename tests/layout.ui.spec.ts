@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 
 test.beforeEach(async ({ page }) => {
-  const html = (await readFile('index.html', 'utf8')).replace('/src/main.ts', '/tests/ui-harness.js');
+  const html = (await readFile('index.html', 'utf8')).replace('/src/bootstrap.ts', '/tests/ui-harness.js');
   await page.route('http://127.0.0.1:1420/', route => route.fulfill({ body: html, contentType: 'text/html' }));
   await page.goto('/');
   await expect(page.locator('.tab .connected')).toHaveCount(1);
@@ -64,12 +64,38 @@ test('shift-right-click exposes nested one-click split layouts', async ({ page }
   await page.screenshot({ path: 'test-results/nine-panes.png' });
 });
 
-test('native tab drag reorders; pane drag swaps sessions without spawning or closing', async ({ page }) => {
+test('pointer tab drag reorders in both directions; pane drag swaps sessions without spawning or closing', async ({ page }) => {
   await page.locator('#btn-add').click();
   const before = await page.locator('.tab').evaluateAll(els => els.map(el => (el as HTMLElement).dataset.sid));
-  await page.locator('.tab').first().dragTo(page.locator('.tab').last());
+  await page.evaluate(() => {
+    (window as any).nativeTabDrags = 0;
+    document.addEventListener('dragstart', () => (window as any).nativeTabDrags++);
+  });
+  const first = await page.locator('.tab .label').first().boundingBox();
+  const last = await page.locator('.tab .label').last().boundingBox();
+  await page.mouse.move(first!.x + first!.width / 2, first!.y + first!.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(last!.x + last!.width / 2, last!.y + last!.height / 2, { steps: 8 });
+  await expect(page.locator('.tab.drop-after')).toHaveCount(1);
+  await expect(page.locator('.tab-drop-slot')).toBeVisible();
+  expect((await page.locator('.tab.dragging').boundingBox())!.x).toBeGreaterThan(first!.x + 40);
+  await expect.poll(async () => (await page.locator('.tab.drop-after').boundingBox())!.x).toBeLessThan(last!.x - 40);
+  await page.mouse.move(last!.x + 8, last!.y + last!.height / 2);
+  await page.screenshot({ path: 'test-results/tab-drag-preview.png' });
+  await page.mouse.move(last!.x + last!.width / 2, last!.y + last!.height / 2);
+  await page.mouse.up();
   const after = await page.locator('.tab').evaluateAll(els => els.map(el => (el as HTMLElement).dataset.sid));
   expect(after).toEqual([...before].reverse());
+  await page.waitForFunction(() => [...document.querySelectorAll('.tab')].every(el => el.getAnimations().length === 0));
+  await page.mouse.move(last!.x + last!.width / 2, last!.y + last!.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(first!.x + first!.width / 2, first!.y + first!.height / 2, { steps: 8 });
+  await expect(page.locator('.tab.drop-before')).toHaveCount(1);
+  await page.mouse.up();
+  await expect(page.locator('.tab-drop-slot')).toHaveCount(0);
+  expect(await page.locator('.tab').evaluateAll(els => els.map(el => (el as HTMLElement).dataset.sid))).toEqual(before);
+  expect(await page.evaluate(() => (window as any).nativeTabDrags)).toBe(0);
+  await expect(page.locator('.tab.dragging')).toHaveCount(0);
   await page.keyboard.press('Control+Shift+D');
   await expect(page.locator('.term-pane:visible')).toHaveCount(2);
   const panes = page.locator('.workspace-root:not([hidden]) .pane-cell');
@@ -77,6 +103,58 @@ test('native tab drag reorders; pane drag swaps sessions without spawning or clo
   await panes.first().locator('.pane-grip').dragTo(panes.last().locator('.pane-grip'));
   expect(await panes.evaluateAll(els => els.map(el => (el as HTMLElement).dataset.sid))).toEqual([...ids].reverse());
   expect(await page.evaluate(() => (window as any).testState.calls.filter(c => c.command === 'close_session').length)).toBe(0);
+});
+
+test('tab clicks still activate; sorting survives title updates and cancels outside the bar or on Escape', async ({ page }) => {
+  await page.locator('#btn-add').click();
+  await expect(page.locator('.tab .connected')).toHaveCount(2);
+  const ids = await page.locator('.tab').evaluateAll(els => els.map(el => (el as HTMLElement).dataset.sid));
+  await page.locator('.tab .label').first().click();
+  await expect(page.locator('.tab.active')).toHaveAttribute('data-sid', ids[0]!);
+  const source = await page.locator('.tab .label').first().boundingBox();
+  const target = await page.locator('.tab .label').last().boundingBox();
+  const start = async () => {
+    await page.mouse.move(source!.x + source!.width / 2, source!.y + source!.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(target!.x + target!.width / 2, target!.y + target!.height / 2, { steps: 6 });
+    await expect(page.locator('.tab.dragging')).toHaveCount(1);
+  };
+  await start();
+  await page.keyboard.press('Escape');
+  await page.mouse.up();
+  await expect(page.locator('.tab.dragging, .tab.drop-after')).toHaveCount(0);
+  expect(await page.locator('.tab').evaluateAll(els => els.map(el => (el as HTMLElement).dataset.sid))).toEqual(ids);
+  await start();
+  await page.mouse.move(400, 300);
+  await page.mouse.up();
+  expect(await page.locator('.tab').evaluateAll(els => els.map(el => (el as HTMLElement).dataset.sid))).toEqual(ids);
+  await start();
+  await page.evaluate(async id => (window as any).emitPty(id, '\x1b]0;updated while dragging\x07'), ids[0]);
+  await expect(page.locator('.tab .label').first()).toHaveText('updated while dragging');
+  await expect(page.locator('.tab.dragging')).toHaveCount(1);
+  await page.mouse.up();
+  expect(await page.locator('.tab').evaluateAll(els => els.map(el => (el as HTMLElement).dataset.sid))).toEqual([...ids].reverse());
+  await expect(page.locator('.tab.active')).toHaveAttribute('data-sid', ids[0]!);
+  await page.locator('.tab .label').first().click();
+  await expect(page.locator('.tab.active')).toHaveAttribute('data-sid', ids[1]!);
+  await page.locator('.tab .close').first().click();
+  await expect(page.locator('.tab')).toHaveCount(1);
+});
+
+test('reduced motion keeps a visible drop slot without sliding transitions', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.locator('#btn-add').click();
+  await expect(page.locator('.tab .connected')).toHaveCount(2);
+  const source = await page.locator('.tab .label').first().boundingBox();
+  const target = await page.locator('.tab .label').last().boundingBox();
+  await page.mouse.move(source!.x + source!.width / 2, source!.y + source!.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(target!.x + target!.width / 2, target!.y + target!.height / 2, { steps: 6 });
+  await expect(page.locator('.tab-drop-slot')).toBeVisible();
+  expect(await page.locator('.tab:not(.dragging)').evaluate(el => getComputedStyle(el).transitionDuration)).toBe('0s');
+  await page.mouse.up();
+  await expect(page.locator('.tab-drop-slot')).toHaveCount(0);
+  expect(await page.locator('.tab').evaluateAll(els => els.flatMap(el => el.getAnimations()).length)).toBe(0);
 });
 
 test('settings remap actual split shortcuts, reject collisions and persist right click', async ({ page }) => {

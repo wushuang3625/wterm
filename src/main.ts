@@ -1,3 +1,4 @@
+import { configStorage } from './config-storage';
 import "@xterm/xterm/css/xterm.css";
 import "./styles.css";
 import "./features.css";
@@ -20,6 +21,8 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { sameSshAccount } from "./session-identity";
 import { leaves, splitLeaf, removeLeaf, swapLeaves, grid, type Layout, type WorkspaceTab } from './layout';
 import { shortcutAction, keyChord } from './shortcuts';
+import { bindTabDrag } from './tab-drag';
+import { captureHistory, restoreHistory, MAX_HISTORY_CHARS, WORKSPACE_HISTORY_CHARS, type SessionHistory } from './session-history';
 import { listFavorites, favoriteIcon, favoriteTypeLabel, favoriteScriptEnvironmentLabel, normalizeFavoriteCommand, showFavoritesManager, shellBasename, type Favorite } from "./favorites";
 import { applyTheme, getTerminalTheme } from "./themes";
 import { applyAppearance } from "./appearance";
@@ -82,9 +85,9 @@ app.innerHTML = `
       <button id="search-close" title="关闭 (Esc)">✕</button>
     </div>
     <button id="split-broadcast" class="tb-btn" hidden>广播输入</button><div class="window-controls">
-      <button id="window-minimize" aria-label="最小化">─</button>
-      <button id="window-maximize" aria-label="最大化或还原">□</button>
-      <button id="window-close" aria-label="关闭窗口">×</button>
+      <button id="window-minimize" aria-label="最小化" title="最小化"><svg viewBox="0 0 12 12" aria-hidden="true"><line x1="2.5" y1="6" x2="9.5" y2="6"/></svg></button>
+      <button id="window-maximize" aria-label="最大化或还原" title="最大化 / 还原"><svg viewBox="0 0 12 12" aria-hidden="true"><rect x="2.5" y="2.5" width="7" height="7"/></svg></button>
+      <button id="window-close" aria-label="关闭窗口" title="关闭"><svg viewBox="0 0 12 12" aria-hidden="true"><line x1="3" y1="3" x2="9" y2="9"/><line x1="9" y1="3" x2="3" y2="9"/></svg></button>
     </div>
   </div>
   <div class="main">
@@ -94,6 +97,13 @@ app.innerHTML = `
 
 const tabsEl = document.querySelector<HTMLDivElement>("#tabs")!;
 const termArea = document.querySelector<HTMLDivElement>("#term-area")!;
+const refreshTabDrag = bindTabDrag(tabsEl, (id, targetId) => {
+  const from = workspaceTabs.findIndex(tab => tab.id === id);
+  const to = workspaceTabs.findIndex(tab => tab.id === targetId);
+  if (from < 0 || to < 0 || from === to) return;
+  workspaceTabs.splice(to, 0, workspaceTabs.splice(from, 1)[0]);
+  renderTabs();
+});
 
 const sessions = new Map<string, TermSession>();
 const broadcastSessionIds = new Set<string>();
@@ -115,20 +125,20 @@ const refreshTerminalTheme = () => {
   const theme = getTerminalTheme();
   for (const session of sessions.values()) {
     session.term.options.theme = theme;
-    session.term.options.fontFamily = localStorage.getItem('wterm_font_family') || "'Cascadia Code', Consolas, monospace";
-    session.term.options.fontSize = Number(localStorage.getItem('wterm_font_size')) || 14;
-    session.term.options.lineHeight = Number(localStorage.getItem('wterm_line_height')) || 1.25;
-    session.term.options.letterSpacing = Number(localStorage.getItem('wterm_letter_spacing')) || 0;
+    session.term.options.fontFamily = configStorage.getItem('wterm_font_family') || "'Cascadia Code', 'JetBrains Mono', Consolas, monospace";
+    session.term.options.fontSize = Number(configStorage.getItem('wterm_font_size')) || 14;
+    session.term.options.lineHeight = Number(configStorage.getItem('wterm_line_height')) || 1.25;
+    session.term.options.letterSpacing = Number(configStorage.getItem('wterm_letter_spacing')) || 0;
   }
   requestAnimationFrame(fitVisible);
 };
 const MIN_FONT_SIZE = 8;
 const MAX_FONT_SIZE = 40;
 function adjustFontSize(delta: number): void {
-  const current = Number(localStorage.getItem('wterm_font_size')) || 14;
+  const current = Number(configStorage.getItem('wterm_font_size')) || 14;
   const next = Math.max(MIN_FONT_SIZE, Math.min(MAX_FONT_SIZE, current + delta));
   if (next === current) return;
-  localStorage.setItem('wterm_font_size', String(next));
+  configStorage.setItem('wterm_font_size', String(next));
   for (const session of sessions.values()) session.term.options.fontSize = next;
   requestAnimationFrame(fitVisible);
 }
@@ -140,6 +150,11 @@ const ownerOf = (sid: string | null) => workspaceTabs.find(tab => sid && leaves(
 let layoutBusy = false;
 function registerSession(session: TermSession, target?: { tab: WorkspaceTab; sid: string; direction: 'h' | 'v' }): void {
   sessions.set(session.id, session);
+  const historyChange = session.term.onWriteParsed(() => {
+    historyCache.delete(session);
+    scheduleHistorySave();
+  });
+  session.unlisteners.push(() => historyChange.dispose());
   if (target && workspaceTabs.includes(target.tab) && leaves(target.tab.root).includes(target.sid)) {
     target.tab.root = splitLeaf(target.tab.root, target.sid, session.id, target.direction);
     target.tab.focused = session.id;
@@ -151,8 +166,8 @@ const windowSessionPrefix = crypto.randomUUID();
 (window as unknown as Record<string, unknown>).__wtermSessionPrefix = windowSessionPrefix;
 
 type SavedLeaf =
-  | { kind: "local"; shell: string | null; cwd?: string; title: string }
-  | { kind: "ssh"; profile: SshProfile; title: string };
+  | { kind: "local"; shell: string | null; cwd?: string; title: string; history?: SessionHistory }
+  | { kind: "ssh"; profile: SshProfile; title: string; history?: SessionHistory };
 type SavedLayout =
   | { leaf: SavedLeaf }
   | { direction: "h" | "v"; ratio: number; first: SavedLayout; second: SavedLayout };
@@ -172,22 +187,28 @@ interface SessionTransferPayload {
   cwd?: string;
   screen: string;
 }
-const workspaceStorageKey = `wterm_workspace_v1:${getCurrentWindow().label}`;
+let workspaceStorageKey = `wterm_workspace_v1:${getCurrentWindow().label}`;
 let restoringWorkspace = false;
 let workspaceSaveTimer: number | undefined;
+let historySaveTimer: number | undefined;
+const historyCache = new WeakMap<TermSession, { limit: number; cols: number; rows: number; history?: SessionHistory }>();
 
-function snapshotLayout(node: Layout): SavedLayout | null {
+function snapshotLayout(node: Layout, historyLimit: number): SavedLayout | null {
   if ("sid" in node) {
     const session = sessions.get(node.sid);
     if (!session) return null;
+    const cached = historyCache.get(session);
+    const history = cached && cached.limit === historyLimit && cached.cols === session.term.cols && cached.rows === session.term.rows
+      ? cached.history : captureHistory(session, historyLimit);
+    historyCache.set(session, { limit: historyLimit, cols: session.term.cols, rows: session.term.rows, history });
     return {
       leaf: session.profile
-        ? { kind: "ssh", profile: session.profile, title: session.title }
-        : { kind: "local", shell: session.localShell ?? null, cwd: session.cwd, title: session.title },
+        ? { kind: "ssh", profile: session.profile, title: session.title, history }
+        : { kind: "local", shell: session.localShell ?? null, cwd: session.cwd, title: session.title, history },
     };
   }
-  const first = snapshotLayout(node.first);
-  const second = snapshotLayout(node.second);
+  const first = snapshotLayout(node.first, historyLimit);
+  const second = snapshotLayout(node.second, historyLimit);
   if (!first) return second;
   if (!second) return first;
   return { direction: node.direction, ratio: node.ratio, first, second };
@@ -195,8 +216,10 @@ function snapshotLayout(node: Layout): SavedLayout | null {
 
 function saveWorkspace(): void {
   if (restoringWorkspace) return;
+  if (historySaveTimer !== undefined) { window.clearTimeout(historySaveTimer); historySaveTimer = undefined; }
+  const historyLimit = Math.min(MAX_HISTORY_CHARS, Math.floor(WORKSPACE_HISTORY_CHARS / Math.max(1, sessions.size)));
   const tabs = workspaceTabs.flatMap(tab => {
-    const root = snapshotLayout(tab.root);
+    const root = snapshotLayout(tab.root, historyLimit);
     return root ? [{ root, focusedIndex: Math.max(0, leaves(tab.root).indexOf(tab.focused)) }] : [];
   });
   const state: SavedWorkspace = {
@@ -206,7 +229,19 @@ function saveWorkspace(): void {
     activeTab: Math.max(0, workspaceTabs.indexOf(ownerOf(activeId)!)),
     tabs,
   };
-  localStorage.setItem(workspaceStorageKey, JSON.stringify(state));
+  try { configStorage.setItem(workspaceStorageKey, JSON.stringify(state)); }
+  catch (error) {
+    // Retain reconnect/layout information if storage is nearly full.
+    const layoutOnly = JSON.stringify(state, (key, value) => key === 'history' ? undefined : value);
+    try { configStorage.setItem(workspaceStorageKey, layoutOnly); }
+    catch { report(`工作区保存失败: ${String(error)}`); }
+  }
+}
+
+function scheduleHistorySave(): void {
+  if (restoringWorkspace || historySaveTimer !== undefined) return;
+  // Throttle: continuous output must still be checkpointed every two seconds.
+  historySaveTimer = window.setTimeout(() => { historySaveTimer = undefined; saveWorkspace(); }, 2000);
 }
 
 function scheduleWorkspaceSave(): void {
@@ -221,7 +256,7 @@ function scheduleWorkspaceSave(): void {
 async function restoreSavedLeaf(leaf: SavedLeaf): Promise<string | null> {
   const before = new Set(sessions.keys());
   if (leaf.kind === "local") {
-    await newLocalSession(leaf.shell ?? undefined, leaf.title, undefined, leaf.cwd);
+    await newLocalSession(leaf.shell ?? undefined, leaf.title, undefined, leaf.cwd, leaf.history);
   } else {
     let password: string | undefined;
     let passphrase: string | undefined;
@@ -231,7 +266,7 @@ async function restoreSavedLeaf(leaf: SavedLeaf): Promise<string | null> {
     if (leaf.profile.identity_file) {
       passphrase = await loadCredential("passphrase", leaf.profile.identity_file);
     }
-    await newSshSession(leaf.profile, password, passphrase);
+    await newSshSession(leaf.profile, password, passphrase, leaf.history);
   }
   const id = [...sessions.keys()].find(candidate => !before.has(candidate)) ?? null;
   const session = id ? sessions.get(id) : undefined;
@@ -255,7 +290,7 @@ async function restoreSavedLayout(node: SavedLayout): Promise<{ root: Layout; id
 }
 
 async function restoreWorkspace(): Promise<boolean> {
-  const raw = localStorage.getItem(workspaceStorageKey);
+  const raw = configStorage.getItem(workspaceStorageKey);
   if (!raw) return false;
   let saved: SavedWorkspace;
   try { saved = JSON.parse(raw) as SavedWorkspace; }
@@ -334,26 +369,26 @@ async function moveSessionToNewWindow(session: TermSession): Promise<void> {
     screen: session.serialize.serialize(),
   };
   const key = `wterm_transfer_${token}`;
-  localStorage.setItem(key, JSON.stringify(payload));
+  configStorage.setItem(key, JSON.stringify(payload));
   let stopAck: (() => void) | undefined;
   stopAck = await listen<{ token: string; id: string }>("wterm-session-adopted", event => {
     if (event.payload.token !== token || event.payload.id !== session.id) return;
     stopAck?.();
-    localStorage.removeItem(key);
+    configStorage.removeItem(key);
     detachSessionFrontend(session.id);
   });
   try {
     await createDetachedWindow(session.title, token);
   } catch (error) {
     stopAck?.();
-    localStorage.removeItem(key);
+    configStorage.removeItem(key);
     throw error;
   }
 }
 
 async function adoptTransferredSession(token: string): Promise<boolean> {
   const key = `wterm_transfer_${token}`;
-  const raw = localStorage.getItem(key);
+  const raw = configStorage.getItem(key);
   if (!raw) return false;
   let payload: SessionTransferPayload;
   try { payload = JSON.parse(raw) as SessionTransferPayload; }
@@ -384,7 +419,7 @@ async function adoptTransferredSession(token: string): Promise<boolean> {
     if (event === "closed" && session.profile) void autoReconnectSsh(session, session.profile);
   });
   watchTitle(session, title => { session.title = title; renderTabs(); });
-  localStorage.removeItem(key);
+  configStorage.removeItem(key);
   await emit("wterm-session-adopted", { token, id: session.id });
   return true;
 }
@@ -404,10 +439,10 @@ document.querySelector('#split-broadcast')!.addEventListener('click', () => {
  updateBroadcastButton(); if (activeId) sessions.get(activeId)?.term.focus();
 });
 function recentConnections(): SshProfile[] {
- try { const value = JSON.parse(localStorage.getItem('wterm_recent_connections') || '[]'); return Array.isArray(value) ? value.filter(p => p && typeof p.host === 'string' && typeof p.name === 'string').slice(0, 3) : []; } catch { return []; }
+ try { const value = JSON.parse(configStorage.getItem('wterm_recent_connections') || '[]'); return Array.isArray(value) ? value.filter(p => p && typeof p.host === 'string' && typeof p.name === 'string').slice(0, 5) : []; } catch { return []; }
 }
 function rememberConnection(profile: SshProfile): void {
- localStorage.setItem('wterm_recent_connections', JSON.stringify([profile, ...recentConnections().filter(p => !sameSshAccount(p, profile))].slice(0, 3)));
+ configStorage.setItem('wterm_recent_connections', JSON.stringify([profile, ...recentConnections().filter(p => !sameSshAccount(p, profile))].slice(0, 5)));
 }
 // ---------- 标签栏 ----------
 
@@ -425,7 +460,6 @@ function renderTabs(): void {
     const el = document.createElement("div");
     const isActive = tab === ownerOf(activeId);
     el.className = "tab" + (isActive ? " active" : "") + (s.activity && !isActive ? " has-activity" : "");
-    el.draggable = true;
     el.dataset.sid = tab.id;
     if (s.profile?.color) { el.classList.add("profile-colored"); el.style.setProperty("--profile-color", s.profile.color); }
     el.innerHTML = `
@@ -454,36 +488,9 @@ function renderTabs(): void {
       void destroyTab(tab);
     };
 
-    // 标签页拖拽移动 / 拖出撕下为独立窗口
-    el.ondragstart = (e) => {
-      el.classList.add("dragging");
-      e.dataTransfer?.setData("text/wterm-tab-id", tab.id);
-      if (e.dataTransfer) {
-        e.dataTransfer.effectAllowed = "move";
-      }
-    };
-
-    el.ondragend = () => el.classList.remove('dragging');
-
-    // 标签之间互相拖拽排序
-    el.ondragover = (e) => {
-      e.preventDefault();
-      if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
-    };
-
-    el.ondrop = (e) => {
-      e.preventDefault();
-      const draggedId = e.dataTransfer?.getData('text/wterm-tab-id');
-      const from = workspaceTabs.findIndex(t => t.id === draggedId);
-      const to = workspaceTabs.indexOf(tab);
-      if (from >= 0 && from !== to) {
-        workspaceTabs.splice(to, 0, workspaceTabs.splice(from, 1)[0]);
-        renderTabs();
-      }
-    };
-
     tabsEl.appendChild(el);
   }
+  refreshTabDrag();
   requestAnimationFrame(() => tabsEl.querySelector<HTMLElement>(".tab.active")?.scrollIntoView({ block: "nearest", inline: "nearest" }));
   scheduleWorkspaceSave();
 }
@@ -679,7 +686,7 @@ async function toggleSftpPanel(): Promise<void> {
 
 // ---------- 会话创建 ----------
 
-async function newLocalSession(shellCmd?: string, shellTitle?: string, target?: { tab: WorkspaceTab; sid: string; direction: 'h' | 'v' }, cwd?: string): Promise<void> {
+async function newLocalSession(shellCmd?: string, shellTitle?: string, target?: { tab: WorkspaceTab; sid: string; direction: 'h' | 'v' }, cwd?: string, history?: SessionHistory): Promise<void> {
   const id = `${windowSessionPrefix}-s${++counter}`;
   const pane = document.createElement("div");
   // 先置为可见，否则 fit 量不到真实尺寸（proposeDimensions 会返回 NaN）
@@ -697,6 +704,7 @@ async function newLocalSession(shellCmd?: string, shellTitle?: string, target?: 
   };
   registerSession(session, target);
   activateSession(id);
+  await restoreHistory(session, history);
   await bindSessionIO(session, () => renderTabs());
   watchTitle(session, (t) => { session.title = t; renderTabs(); });
   if (!sessions.has(id)) { session.unlisteners.forEach(unlisten => unlisten()); return; }
@@ -714,9 +722,9 @@ async function newLocalSession(shellCmd?: string, shellTitle?: string, target?: 
   renderTabs();
 }
 
-export async function tryReuseSshProfile(profile: SshProfile): Promise<boolean> {
+export async function tryReuseSshProfile(profile: SshProfile, history?: SessionHistory): Promise<boolean> {
   const live = [...sessions.values()].find(s => s.profile && sameSshAccount(s.profile, profile) && s.status === "connected");
-  if (live) { await newSshSessionOnExisting(live); return true; }
+  if (live) { await newSshSessionOnExisting(live, undefined, history); return true; }
   const pending = [...sessions.values()].find(s => s.profile && sameSshAccount(s.profile, profile) && s.status === "connecting");
   if (pending) { activateSession(pending.id); return true; }
   return false;
@@ -765,8 +773,8 @@ async function autoReconnectSsh(session: TermSession, profile: SshProfile, passw
   renderTabs();
 }
 
-export async function newSshSession(profile: SshProfile, password?: string, passphrase?: string): Promise<void> {
-  if (await tryReuseSshProfile(profile)) return;
+export async function newSshSession(profile: SshProfile, password?: string, passphrase?: string, history?: SessionHistory): Promise<void> {
+  if (await tryReuseSshProfile(profile, history)) return;
   const id = `${windowSessionPrefix}-s${++counter}`;
   const pane = document.createElement("div");
   // 同 newLocalSession：先可见，保证尺寸测量有效
@@ -781,6 +789,7 @@ export async function newSshSession(profile: SshProfile, password?: string, pass
   };
   registerSession(session);
   activateSession(id);
+  await restoreHistory(session, history);
   term.write(`\x1b[90m正在连接 ${profile.username}@${profile.host}...\x1b[0m\r\n`);
   await bindSessionIO(session, event => {
     renderTabs();
@@ -811,7 +820,7 @@ export async function newSshSession(profile: SshProfile, password?: string, pass
 }
 
 /** 复用现有 SSH 会话的通道建立新会话 */
-export async function newSshSessionOnExisting(sourceSession: TermSession, target?: { tab: WorkspaceTab; sid: string; direction: 'h' | 'v' }): Promise<void> {
+export async function newSshSessionOnExisting(sourceSession: TermSession, target?: { tab: WorkspaceTab; sid: string; direction: 'h' | 'v' }, history?: SessionHistory): Promise<void> {
   if (!sourceSession.profile) return;
   const profile = sourceSession.profile;
   const id = `${windowSessionPrefix}-s${++counter}`;
@@ -827,6 +836,7 @@ export async function newSshSessionOnExisting(sourceSession: TermSession, target
   };
   registerSession(session, target);
   activateSession(id);
+  await restoreHistory(session, history);
   term.write(`\x1b[90m正在复用连接 ${profile.username}@${profile.host} 打开新终端...\x1b[0m\r\n`);
   await bindSessionIO(session, () => renderTabs());
   if (!sessions.has(id)) { session.unlisteners.forEach(unlisten => unlisten()); return; }
@@ -1672,6 +1682,16 @@ window.addEventListener("resize", () => {
   scheduleWorkspaceSave();
 });
 window.addEventListener("beforeunload", saveWorkspace);
+window.addEventListener('pagehide', saveWorkspace);
+document.addEventListener('visibilitychange', () => { if (document.hidden) saveWorkspace(); });
+void getCurrentWindow().onCloseRequested(async () => {
+  // Drain queued xterm output before Tauri destroys the WebView.
+  await Promise.all([...sessions.values()].map(session => new Promise<void>(resolve => {
+    const timeout = window.setTimeout(resolve, 500);
+    session.term.write('', () => { window.clearTimeout(timeout); resolve(); });
+  })));
+  saveWorkspace();
+}).catch(error => report(`注册历史保存失败: ${String(error)}`));
 
 // ---------- 启动 ----------
 
@@ -1686,7 +1706,15 @@ window.addEventListener("beforeunload", saveWorkspace);
     await applyAppearance();
     const transferToken = new URLSearchParams(window.location.search).get("transfer");
     const adopted = transferToken ? await adoptTransferredSession(transferToken) : false;
-    if (!adopted && !(await restoreWorkspace())) await newLocalSession();
+    if (!adopted) {
+      const directory = await invoke<string | null>('get_launch_directory');
+      if (directory) {
+        // Explorer opens the requested folder immediately and does not overwrite
+        // the normal window's saved workspace or wait for its SSH authentication.
+        workspaceStorageKey += ':explorer';
+        await newLocalSession(undefined, undefined, undefined, directory);
+      } else if (!(await restoreWorkspace())) await newLocalSession();
+    }
   } catch (e) {
     report(`启动失败: ${String(e)}`);
     if (!sessions.size) await newLocalSession().catch(() => {});

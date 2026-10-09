@@ -1,3 +1,4 @@
+// Keep the existing Keychain service name so upgrading the app identifier does not orphan saved credentials.
 const SERVICE: &str = "dev.wterm.app";
 
 fn entry(kind: &str, key: &str) -> Result<keyring::Entry, String> {
@@ -24,7 +25,9 @@ pub fn credential_set(kind: String, key: String, value: String) -> Result<(), St
     if value.is_empty() {
         return Err("不保存空凭据".to_string());
     }
-    entry(&kind, &key)?.set_password(&value).map_err(|e| e.to_string())
+    entry(&kind, &key)?
+        .set_password(&value)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]

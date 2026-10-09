@@ -1,3 +1,4 @@
+import { configStorage } from './config-storage';
 import { LogColorsAddon } from './log-colors';
 import { Terminal, type ITerminalAddon, type ILink, type ILinkProvider } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
@@ -13,6 +14,8 @@ import { createAuthChannel } from "./auth";
 import { createHostKeyChannel } from "./hostkey";
 import { shortcutAction } from "./shortcuts";
 import { getTerminalTheme } from "./themes";
+import { CommandBlocks } from './blocks';
+import { InlineImagePreviewAddon } from './inline-image-preview';
 import { notifyCommandCompleted, notifyDisconnect, scanKeywordNotification } from "./notifications";
 
 let broadcastTargetProvider: ((sourceId: string) => string[]) | undefined;
@@ -43,11 +46,11 @@ export interface TermSession {
 }
 
 export function isCopyOnSelectEnabled(): boolean {
-  return localStorage.getItem("wterm_copy_on_select") === "true";
+  return configStorage.getItem("wterm_copy_on_select") === "true";
 }
 
 export function setCopyOnSelectEnabled(val: boolean): void {
-  localStorage.setItem("wterm_copy_on_select", val ? "true" : "false");
+  configStorage.setItem("wterm_copy_on_select", val ? "true" : "false");
 }
 
 /**
@@ -58,10 +61,17 @@ class ScrollbarAddon implements ITerminalAddon {
   private term!: Terminal;
   private track?: HTMLDivElement;
   private thumb?: HTMLDivElement;
+  private navigator?: HTMLDivElement;
+  private positionLabel?: HTMLSpanElement;
+  private topButton?: HTMLButtonElement;
+  private bottomButton?: HTMLButtonElement;
   private readonly disposables: { dispose(): void }[] = [];
   private resizeObserver?: ResizeObserver;
   private renderScheduled = false;
   private isDragging = false;
+  private hideTimer?: number;
+  private wheelFrame?: number;
+  private wheelDirection = 0;
 
   activate(term: Terminal): void {
     this.term = term;
@@ -82,12 +92,55 @@ class ScrollbarAddon implements ITerminalAddon {
       });
     }
 
+    const revealOnScroll = () => this.showNavigator();
+    el.addEventListener('wheel', revealOnScroll, { passive: true });
+    el.addEventListener('touchstart', revealOnScroll, { passive: true });
+    this.disposables.push({ dispose: () => {
+      el.removeEventListener('wheel', revealOnScroll);
+      el.removeEventListener('touchstart', revealOnScroll);
+    } });
+    // This hook is only called for viewport scrolling, after xterm has excluded
+    // mouse reporting to applications such as vim/tmux.
+    term.attachCustomWheelEventHandler(event => {
+      if (event.deltaY && !event.shiftKey && term.buffer.active.type === 'normal') {
+        this.scheduleWheelEdgeSync(event.deltaY);
+      }
+      return true;
+    });
+    this.disposables.push({ dispose: () => term.attachCustomWheelEventHandler(() => true) });
+
     this.track = document.createElement("div");
     this.track.className = "term-scrollbar";
     this.thumb = document.createElement("div");
     this.thumb.className = "term-scrollbar-thumb";
     this.track.append(this.thumb);
     el.append(this.track);
+
+    this.navigator = document.createElement('div');
+    this.navigator.className = 'term-scroll-navigator';
+    this.navigator.hidden = true;
+    this.topButton = document.createElement('button');
+    this.topButton.type = 'button';
+    this.topButton.textContent = '↑';
+    this.topButton.title = '跳到顶部';
+    this.topButton.setAttribute('aria-label', '跳到顶部');
+    this.positionLabel = document.createElement('span');
+    this.positionLabel.className = 'term-scroll-position';
+    this.positionLabel.setAttribute('aria-live', 'off');
+    this.bottomButton = document.createElement('button');
+    this.bottomButton.type = 'button';
+    this.bottomButton.textContent = '↓';
+    this.bottomButton.title = '跳到底部';
+    this.bottomButton.setAttribute('aria-label', '跳到底部');
+    this.navigator.append(this.topButton, this.positionLabel, this.bottomButton);
+    el.append(this.navigator);
+    this.topButton.onclick = () => this.jumpToEdge('top');
+    this.bottomButton.onclick = () => this.jumpToEdge('bottom');
+    this.navigator.addEventListener('pointerenter', () => this.clearHideTimer());
+    this.navigator.addEventListener('pointerleave', () => this.scheduleHideNavigator());
+    this.navigator.addEventListener('focusin', () => this.clearHideTimer());
+    this.navigator.addEventListener('focusout', () => this.scheduleHideNavigator());
+    this.track.addEventListener('pointerenter', () => this.showNavigator());
 
     this.track.addEventListener("pointerdown", this.onPointerDown);
     this.disposables.push(term.onScroll(() => {
@@ -102,11 +155,68 @@ class ScrollbarAddon implements ITerminalAddon {
 
   dispose(): void {
     this.isDragging = false;
+    this.clearHideTimer();
+    if (this.wheelFrame !== undefined) cancelAnimationFrame(this.wheelFrame);
     document.body.classList.remove("terminal-scrolling");
     this.disposables.forEach(d => d.dispose());
     this.resizeObserver?.disconnect();
     this.term.element?.classList.remove("xterm-custom-scrollbar");
     this.track?.remove();
+    this.navigator?.remove();
+  }
+
+  private clearHideTimer(): void {
+    if (this.hideTimer !== undefined) window.clearTimeout(this.hideTimer);
+    this.hideTimer = undefined;
+  }
+
+  private scheduleHideNavigator(): void {
+    this.clearHideTimer();
+    this.hideTimer = window.setTimeout(() => {
+      this.hideTimer = undefined;
+      if (this.isDragging || this.navigator?.matches(':hover, :focus-within')) return;
+      this.navigator?.classList.remove('visible');
+    }, 1800);
+  }
+
+  private showNavigator(): void {
+    if (!this.navigator || this.navigator.hidden) return;
+    this.navigator.classList.add('visible');
+    this.scheduleHideNavigator();
+  }
+
+  private jumpToEdge(edge: 'top' | 'bottom'): void {
+    const viewport = this.term.element?.querySelector<HTMLElement>('.xterm-viewport');
+    if (edge === 'top') {
+      this.term.scrollToTop();
+      if (viewport) viewport.scrollTop = 0;
+    } else {
+      this.term.scrollToBottom();
+      if (viewport) viewport.scrollTop = viewport.scrollHeight - viewport.clientHeight;
+    }
+    this.render();
+    this.showNavigator();
+    this.term.focus();
+  }
+
+  private scheduleWheelEdgeSync(deltaY: number): void {
+    this.wheelDirection = Math.sign(deltaY);
+    if (this.wheelFrame !== undefined) return;
+    this.wheelFrame = requestAnimationFrame(() => {
+      this.wheelFrame = undefined;
+      const viewport = this.term.element?.querySelector<HTMLElement>('.xterm-viewport');
+      const buffer = this.term.buffer.active;
+      if (!viewport?.offsetParent || buffer.type !== 'normal' || buffer.baseY <= 0) return;
+      // xterm 5.5 can coalesce a wheel scroll with a scroll event it intends to
+      // ignore after output/resize. At a DOM edge no further scroll event fires,
+      // so reconcile the buffer via the public API (also restores live following).
+      if (this.wheelDirection > 0 && viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop <= 1) {
+        this.term.scrollToBottom();
+      } else if (this.wheelDirection < 0 && viewport.scrollTop <= 1) {
+        this.term.scrollToTop();
+      }
+      this.render();
+    });
   }
 
   private scheduleRender(): void {
@@ -119,20 +229,28 @@ class ScrollbarAddon implements ITerminalAddon {
   }
 
   private render(): void {
-    if (!this.track || !this.thumb) return;
+    if (!this.track || !this.thumb || !this.navigator || !this.positionLabel || !this.topButton || !this.bottomButton) return;
     const buffer = this.term.buffer.active;
     const maxScroll = buffer.baseY;
     const trackH = this.track.clientHeight;
     if (maxScroll <= 0 || trackH <= 0) {
       this.track.classList.add("hidden");
+      this.navigator.hidden = true;
+      this.navigator.classList.remove('visible');
       return;
     }
     this.track.classList.remove("hidden");
+    this.navigator.hidden = false;
     const rows = this.term.rows;
     const total = buffer.length;
     const thumbH = Math.max(24, Math.round((trackH * rows) / total));
     const maxTop = trackH - thumbH;
     const ratio = Math.min(1, Math.max(0, buffer.viewportY / maxScroll));
+    const atTop = buffer.viewportY <= 0;
+    const atBottom = buffer.viewportY >= maxScroll;
+    this.positionLabel.textContent = atTop ? '已到顶部' : atBottom ? '已到底部' : `${Math.round(ratio * 100)}%`;
+    this.topButton.disabled = atTop;
+    this.bottomButton.disabled = atBottom;
     this.thumb.style.height = `${thumbH}px`;
     if (!this.isDragging) {
       this.thumb.style.transform = `translateY(${Math.round(maxTop * ratio)}px)`;
@@ -169,6 +287,7 @@ class ScrollbarAddon implements ITerminalAddon {
       this.scrollToPointer(e.clientY, grabOffset);
     }
     this.isDragging = true;
+    this.showNavigator();
     thumb.classList.add("dragging");
     document.body.classList.add("terminal-scrolling");
 
@@ -196,6 +315,7 @@ class ScrollbarAddon implements ITerminalAddon {
         try { this.track.releasePointerCapture(ev.pointerId); } catch {}
       }
       this.render();
+      this.scheduleHideNavigator();
     };
 
     this.track.addEventListener("pointermove", onMove);
@@ -212,15 +332,16 @@ export function createTerminal(container: HTMLDivElement): {
   fit: FitAddon;
   search: SearchAddon;
   serialize: SerializeAddon;
+  image: ImageAddon;
 } {
   const term = new Terminal({
-    fontFamily: localStorage.getItem("wterm_font_family") || "'Cascadia Code', 'JetBrains Mono', Consolas, monospace",
-    fontSize: Number(localStorage.getItem("wterm_font_size")) || 14,
-    lineHeight: Number(localStorage.getItem("wterm_line_height")) || 1.25,
-    letterSpacing: Number(localStorage.getItem("wterm_letter_spacing")) || 0,
+    fontFamily: configStorage.getItem("wterm_font_family") || "'Cascadia Code', 'JetBrains Mono', Consolas, monospace",
+    fontSize: Number(configStorage.getItem("wterm_font_size")) || 14,
+    lineHeight: Number(configStorage.getItem("wterm_line_height")) || 1.25,
+    letterSpacing: Number(configStorage.getItem("wterm_letter_spacing")) || 0,
     cursorBlink: true,
     cursorStyle: "bar",
-    scrollback: Number(localStorage.getItem("wterm_scrollback")) || 10000,
+    scrollback: Number(configStorage.getItem("wterm_scrollback")) || 10000,
     smoothScrollDuration: 0,
     theme: getTerminalTheme(),
     allowProposedApi: true,
@@ -231,12 +352,15 @@ export function createTerminal(container: HTMLDivElement): {
   term.loadAddon(fit);
   term.loadAddon(search);
   term.loadAddon(serialize);
-  term.loadAddon(new ImageAddon());
+  // SIXEL remains in the terminal grid; iTerm2 images use a stable preview layer.
+  const image = new ImageAddon({ sixelSupport: true, iipSupport: false });
+  term.loadAddon(image);
 
   term.open(container);
+  term.loadAddon(new InlineImagePreviewAddon(container));
   term.loadAddon(new LogColorsAddon());
   term.loadAddon(new ScrollbarAddon());
-  if (localStorage.getItem("wterm_webgl") === "true") {
+  if (configStorage.getItem("wterm_webgl") === "true") {
     setTimeout(() => {
       if (!container.isConnected) return;
       void import("@xterm/addon-webgl").then(({ WebglAddon }) => {
@@ -255,7 +379,7 @@ export function createTerminal(container: HTMLDivElement): {
   container.addEventListener("contextmenu", async (e) => {
     e.preventDefault();
     if (e.shiftKey) return;
-    const mode = localStorage.getItem("wterm_right_click") || "copy-paste";
+    const mode = configStorage.getItem("wterm_right_click") || "copy-paste";
     if (mode === "disabled") return;
     try {
       if (mode === "copy" || (mode === "copy-paste" && term.hasSelection())) {
@@ -281,19 +405,20 @@ export function createTerminal(container: HTMLDivElement): {
     return true;
   });
   fit.fit();
-  return { term, fit, search, serialize };
+  return { term, fit, search, serialize, image };
 }
 
 /**
- * 由 pane 的实际可视尺寸计算行列数：clientWidth/clientHeight 已不含 border-box padding，
- * 再手动减去 .term-pane 的 padding，避免 FitAddon 对容器几何的推算误差。
+ * 以 xterm 的实际可视区域计算行列数。命令块展开时它会占据窗格的一部分高度，
+ * 因此不能再按整个 pane 的尺寸计算 PTY 行数。
  */
 export function paneDimensions(pane: HTMLElement, term: Terminal): { cols: number; rows: number } {
   const core = (term as unknown as { _core?: { _renderService?: { dimensions?: { css?: { cell?: { width: number; height: number } } } } } })._core;
   const cell = core?._renderService?.dimensions?.css?.cell;
+  const surface = term.element;
   const style = getComputedStyle(pane);
-  const width = pane.clientWidth - (parseFloat(style.paddingLeft) || 0) - (parseFloat(style.paddingRight) || 0);
-  const height = pane.clientHeight - (parseFloat(style.paddingTop) || 0) - (parseFloat(style.paddingBottom) || 0);
+  const width = surface?.clientWidth || pane.clientWidth - (parseFloat(style.paddingLeft) || 0) - (parseFloat(style.paddingRight) || 0);
+  const height = surface?.clientHeight || pane.clientHeight - (parseFloat(style.paddingTop) || 0) - (parseFloat(style.paddingBottom) || 0);
   if (cell?.width && cell?.height && width > 0 && height > 0) {
     return {
       cols: Math.max(2, Math.floor(width / cell.width)),
@@ -328,7 +453,7 @@ export async function spawnLocal(
     cwd,
     cols,
     rows,
-    noProfile: localStorage.getItem("wterm_no_profile") === "true",
+    noProfile: configStorage.getItem("wterm_no_profile") === "true",
   });
 }
 
@@ -366,7 +491,7 @@ export async function spawnSsh(
       cols,
       rows,
       ...opts,
-      useKeychain: localStorage.getItem("wterm_keychain_enabled") !== "false",
+      useKeychain: configStorage.getItem("wterm_keychain_enabled") !== "false",
       authChannel: auth.channel,
       hostKeyChannel: hostKey.channel,
     });
@@ -597,7 +722,7 @@ export function installSmartLinks(session: TermSession): void {
                   sid: session.id,
                   path: item.raw,
                   cwd: session.cwd ?? null,
-                }).catch(error => console.warn("打开本地路径失败", error));
+                }).catch(error => alert(`打开本地路径失败: ${error}`));
               }
             }
           },
@@ -620,6 +745,12 @@ export async function bindSessionIO(
   onStateChange: (event: "activity" | "closed") => void
 ): Promise<void> {
   const { id, term } = session;
+  const blocks = new CommandBlocks(term, session.pane,
+    command => {
+      blocks.submit(command);
+      void invoke('write_session', { id, data: command + '\r' });
+    });
+  session.unlisteners.push(() => blocks.dispose());
   let commandStartedAt = 0;
   const completeCommand = (exitCode?: string) => {
     if (!commandStartedAt) return;
@@ -652,8 +783,10 @@ export async function bindSessionIO(
   });
   const osc133 = term.parser.registerOscHandler(133, value => {
     const [marker, exitCode] = value.split(";");
-    if (marker === "C") commandStartedAt = Date.now();
-    else if (marker === "D") completeCommand(exitCode);
+    if (marker === 'A') blocks.promptStart();
+    else if (marker === 'B') blocks.promptEnd();
+    else if (marker === "C") commandStartedAt = Date.now();
+    else if (marker === "D") { blocks.commandFinished(exitCode); completeCommand(exitCode); }
     return true;
   });
   session.unlisteners.push(() => {
@@ -720,6 +853,7 @@ export async function bindSessionIO(
       return;
     }
     if (data.includes("\r") || data.includes("\n")) commandStartedAt = Date.now();
+    blocks.input(data);
     const bytes = Array.from(new TextEncoder().encode(data));
     send(bytes);
     const targets = broadcastTargetProvider?.(id).filter(target => target !== id) ?? [];

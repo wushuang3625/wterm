@@ -5,6 +5,7 @@
 //! - SFTP 会话惰性创建并缓存，避免每次列目录都重新协商；
 //! - 大文件传输分块读写并上报进度事件（运维场景常传大日志文件）。
 
+use crate::events::EventSink as AppHandle;
 use anyhow::{anyhow, Context};
 use russh_sftp::client::SftpSession;
 use russh_sftp::protocol::OpenFlags;
@@ -12,7 +13,6 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::ssh::SshHandler;
@@ -196,7 +196,11 @@ pub async fn upload(
         .await
         .with_context(|| format!("无法打开本地文件 {}", local))?;
     let total = src.metadata().await.map(|m| m.len()).unwrap_or(0);
-    let name = local.rsplit(['/', '\\']).next().unwrap_or(local).to_string();
+    let name = local
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(local)
+        .to_string();
 
     let mut dst = sftp
         .open_with_flags(
@@ -279,9 +283,7 @@ pub async fn edit_remote_file(
     {
         let local_arg = local_str.clone();
         std::thread::spawn(move || {
-            let _ = std::process::Command::new("open")
-                .arg(&local_arg)
-                .spawn();
+            let _ = std::process::Command::new("open").arg(&local_arg).spawn();
         });
     }
     #[cfg(all(unix, not(target_os = "macos")))]
@@ -322,7 +324,11 @@ async fn watch_and_sync_back(
     remote: String,
     local: PathBuf,
 ) {
-    let file_name = local.file_name().and_then(|s| s.to_str()).unwrap_or("").to_string();
+    let file_name = local
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_string();
     let event_name = format!("sftp-edit-{}", sid);
 
     let _ = app.emit(
@@ -400,34 +406,58 @@ async fn watch_and_sync_back(
 
 /// Queue transfers share the exact implementation exercised by cross-implementation tests.
 pub async fn transfer(
-    sftp: &SftpSession, direction: &str, local: &str, remote: &str, overwrite: bool,
+    sftp: &SftpSession,
+    direction: &str,
+    local: &str,
+    remote: &str,
+    overwrite: bool,
     control: tokio::sync::watch::Receiver<crate::transfers::Control>,
     report: impl Fn(u64, u64, f64),
 ) -> anyhow::Result<u64> {
     use crate::transfers;
     require_valid_path(remote)?;
-        if direction == "upload" {
-            let mut source = tokio::fs::File::open(&local).await?;
-            let metadata = source.metadata().await?;
-            if !metadata.is_file() { anyhow::bail!("只支持上传普通文件"); }
-            let total = metadata.len();
-            let flags = OpenFlags::WRITE | OpenFlags::CREATE |
-                if overwrite { OpenFlags::TRUNCATE } else { OpenFlags::EXCLUDE };
-            let mut target = sftp.open_with_flags(remote, flags).await?;
-            report(0, total, 0.0);
-            let done = transfers::copy(&mut source, &mut target, control.clone(), |done, speed| report(done, total, speed)).await?;
-            target.shutdown().await?;
-            Ok(done)
-        } else {
-            let metadata = sftp.metadata(remote).await?;
-            if metadata.is_dir() { anyhow::bail!("请选择文件，暂不支持递归下载目录"); }
-            let total = metadata.size.unwrap_or(0);
-            let mut source = sftp.open(remote).await?;
-            let mut target = tokio::fs::OpenOptions::new().write(true).create(true)
-                .create_new(!overwrite).truncate(overwrite).open(&local).await?;
-            report(0, total, 0.0);
-            let done = transfers::copy(&mut source, &mut target, control.clone(), |done, speed| report(done, total, speed)).await?;
-            source.shutdown().await?;
-            Ok(done)
+    if direction == "upload" {
+        let mut source = tokio::fs::File::open(&local).await?;
+        let metadata = source.metadata().await?;
+        if !metadata.is_file() {
+            anyhow::bail!("只支持上传普通文件");
         }
+        let total = metadata.len();
+        let flags = OpenFlags::WRITE
+            | OpenFlags::CREATE
+            | if overwrite {
+                OpenFlags::TRUNCATE
+            } else {
+                OpenFlags::EXCLUDE
+            };
+        let mut target = sftp.open_with_flags(remote, flags).await?;
+        report(0, total, 0.0);
+        let done = transfers::copy(&mut source, &mut target, control.clone(), |done, speed| {
+            report(done, total, speed)
+        })
+        .await?;
+        target.shutdown().await?;
+        Ok(done)
+    } else {
+        let metadata = sftp.metadata(remote).await?;
+        if metadata.is_dir() {
+            anyhow::bail!("请选择文件，暂不支持递归下载目录");
+        }
+        let total = metadata.size.unwrap_or(0);
+        let mut source = sftp.open(remote).await?;
+        let mut target = tokio::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .create_new(!overwrite)
+            .truncate(overwrite)
+            .open(&local)
+            .await?;
+        report(0, total, 0.0);
+        let done = transfers::copy(&mut source, &mut target, control.clone(), |done, speed| {
+            report(done, total, speed)
+        })
+        .await?;
+        source.shutdown().await?;
+        Ok(done)
+    }
 }

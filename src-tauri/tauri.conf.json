@@ -1,18 +1,18 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "productName": "wterm",
-  "version": "0.1.4",
-  "identifier": "dev.wterm.app",
+  "version": "0.1.5",
+  "identifier": "dev.wterm.desktop",
   "build": {
-    "beforeDevCommand": "npm run dev",
+    "beforeDevCommand": "npm run dev:desktop",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run build",
+    "beforeBuildCommand": "npm run build:desktop",
     "frontendDist": "../dist"
   },
   "app": {
     "windows": [
       {
-        "title": "wterm 0.1.4",
+        "title": "wterm 0.1.5",
         "width": 1280,
         "height": 800,
         "minWidth": 800,

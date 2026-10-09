@@ -1,3 +1,4 @@
+import { configStorage } from './config-storage';
 export const actions = {
   newTab: ["新建本地标签", "Ctrl+Shift+T"],
   closePane: ["关闭当前窗格", "Ctrl+Shift+W"],
@@ -29,7 +30,7 @@ export type Action = keyof typeof actions;
 
 export function bindings(): Record<Action, string> {
   let saved: Partial<Record<Action, string>> = {};
-  try { saved = JSON.parse(localStorage.getItem("wterm_shortcuts") || "{}"); } catch {}
+  try { saved = JSON.parse(configStorage.getItem("wterm_shortcuts") || "{}"); } catch {}
   return Object.fromEntries(
     Object.entries(actions).map(([key, value]) => [key, saved?.[key as Action] || value[1]])
   ) as Record<Action, string>;

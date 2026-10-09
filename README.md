@@ -2,12 +2,12 @@
 
 开源、轻量、设计驱动的 SSH 工作台 —— **Warp 的颜值 + Tabby 的功能 + 零订阅**。
 
-## 当前状态：v0.1.4（预览版）
+## 当前状态：v0.1.5
 
-核心闭环已验证，日常可用范围：
+桌面应用使用 **Tauri 2 + TypeScript + xterm.js**，Rust 后端负责本地终端、SSH 和 SFTP。
 
 - ✅ 本地 Shell 终端（PowerShell / cmd 等自动探测）+ 多标签 + 递归分屏
-- ✅ xterm.js（可选 WebGL）、终端搜索（Ctrl+F）、主题系统（深/浅 + 10 套内置）、字号快捷缩放（Ctrl+= / Ctrl+-）
+- ✅ xterm.js 终端、终端搜索（Ctrl+F）、连续滚动与顶部／底部导航、主题系统（深/浅 + 14 套内置，含护眼主题）、字号快捷缩放（Ctrl+= / Ctrl+-）
 - ✅ SSH 连接管理（Profile 持久化、分组/标签、树形整理、Ctrl+P 快速连接）
 - ✅ 认证：密码 / 私钥 / 系统 ssh-agent（Windows named pipe、Unix SSH_AUTH_SOCK）/ MFA（多轮 OTP）
 - ✅ 凭据可选写入系统 Keychain（`keyring`）
@@ -15,23 +15,24 @@
 - ✅ SFTP 侧栏文件浏览器、传输队列（进度/暂停/重试）、chmod、目录联动、远程编辑
 - ✅ 命令面板（Ctrl+K）、自定义快捷键、收藏、批量开主机、分屏广播输入
 - ✅ 窗口布局启动恢复、系统通知（命令完成/断开/关键词）、毛玻璃/背景图/透明度
+- ✅ Windows 11 资源管理器第一层菜单「在 wterm 中打开」（文件夹／空白处；需包身份注册，见 [安装说明](docs/windows-explorer.md)）
 - 🟨 部分完成与 ❌ 未完成项见 [功能清单 · 实现核验](docs/feature-list.md)（唯一权威状态）
 
-已知边界（发布说明请如实标注）见 README「当前边界」与 [0.1.4 验收说明](docs/fixes-0.1.4.md)。
+本次更新与安装说明见 [0.1.5 发布说明](docs/releases-0.1.5.md)。已知边界见 README「当前边界」与 [0.1.4 验收说明](docs/fixes-0.1.4.md)。
 
 ## 技术栈
 
 | 层 | 选型 |
 |---|---|
-| 外壳 | Tauri 2（Rust 后端 + WebView2 前端） |
-| 前端 | TypeScript + Vite + xterm.js（WebGL / image / search addon） |
+| 桌面窗口与界面 | Tauri 2 + TypeScript + HTML/CSS |
+| 终端 | xterm.js + WebGL、图片扩展、zmodem.js |
 | 后端 | Rust：`portable-pty`（本地 PTY）、`russh`（SSH）、`keyring`（凭据）、`window-vibrancy`（窗口效果） |
 
 ## 目录结构
 
 ```
 wterm/
-├── index.html              # 入口 HTML（含主题变量）
+├── index.html              # WebView 入口（含主题变量）
 ├── src/                    # 前端 TypeScript
 │   ├── main.ts             # 应用主体：标签、会话生命周期、布局恢复、快捷键分发
 │   ├── terminal.ts         # xterm.js 封装 + 后端 IO 桥接 + 链接识别
@@ -47,7 +48,9 @@ wterm/
 │   ├── appearance.ts       # 背景 / 透明度 / 窗口效果
 │   └── styles.css          # 视觉体系
 ├── src-tauri/src/          # Rust 后端
-│   ├── lib.rs              # Tauri 命令注册
+│   ├── lib.rs              # 与界面无关的核心模块
+│   ├── events.rs           # 进程内事件和数据通道
+│   ├── webview.rs          # Tauri 命令注册和应用入口
 │   ├── pty.rs              # 本地伪终端 + 输出转发
 │   ├── ssh.rs              # russh 连接 + 通道 actor
 │   ├── ssh_route.rs        # ProxyJump 路由解析
@@ -75,24 +78,24 @@ wterm/
 
 ## 运行
 
-### 开发模式（推荐）
+### 桌面开发
 
 ```bash
 npm install
-npx tauri dev
+npm run tauri dev
 ```
 
-`tauri dev` 会同时启动 Vite 开发服务器和桌面应用，并支持前端热重载。
+`npm run tauri dev` 同时启动 Vite 开发服务器和桌面应用。`npm run dev` 仅启动前端开发服务器。
 
 > ⚠️ **注意**：debug 构建的二进制默认加载 `devUrl`（`http://localhost:1420`）。
-> 因此**不要**直接双击运行 `target/debug/wterm.exe`——必须先启动 Vite（`npm run dev`），
+> 因此**不要**直接双击运行 `src-tauri/target/debug/wterm.exe`——必须先启动 Vite（`npm run dev`），
 > 否则窗口白屏。生产构建（`tauri build`）会内嵌前端资源，无此限制。
 
 ### 构建安装包
 
 ```bash
-npm run build
-npx tauri build
+npm run build:web
+npm run tauri build
 ```
 
 ## 快捷键（常用）
@@ -110,11 +113,28 @@ npx tauri build
 
 全部可在设置中重映射，含 wterm / VS Code / iTerm2 预设（见 `src/shortcuts.ts`）。
 
-## SSH 配置存储位置
+## 命令块与图片
 
-`%APPDATA%\wterm\profiles.json`（Windows）
+在「设置 → 常规设置 → 命令块」选择关闭、Shell 标记或输入推断。启用后，终端仍以完整大小显示输出。点击终端右下角的「命令块」按钮，可在同一窗格切换到命令历史视图，折叠、复制或重新运行；关闭视图后继续使用终端。Shell 标记模式依赖 OSC 133；本地 PowerShell 和 cmd 会自动发送标记。没有标记的远程 Shell 可使用输入推断，但复杂行编辑和交互程序中的命令边界可能不准确。
+
+iTerm2 inline image 输出会打开独立的图片预览，默认适应窗格，可切换原始大小并滚动查看；关闭后可从终端左下角再次打开。sixel 仍在终端网格内显示。图片预览无需开启命令块。
+
+## 配置文件
+
+Windows 下的用户配置目录为 `%APPDATA%\wterm\`：
+
+- `settings.json`：主题、字体、终端行为、通知、快捷键、收藏等偏好设置。
+- `profiles.json`：SSH 连接配置与分组。
+
+macOS / Linux 使用系统配置目录下的 `wterm/`。可以在「设置 → 常规设置 → 配置文件」更改 `settings.json` 的绝对路径；应用会先把当前设置写到新文件，再通过默认配置目录中的 `settings-location.json` 记住新路径。恢复默认路径时会把当前设置写回默认 `settings.json`。旧文件保留，避免丢失数据；为避免覆盖，目标位置若已有其他文件，请选择新文件名。SSH Profile 仍使用上述 `profiles.json`。
+
+首次启动会把旧版 WebView localStorage 中的偏好设置迁入 JSON 文件。可以把配置文件纳入版本管理；手工修改后重启应用生效。`settings.json` 的 `version` 当前为 `1`，`settings` 中的值均为字符串，例如 `"wterm_font_size": "16"`。密码和私钥短语保存在系统 Keychain，不写入配置文件；窗口会话快照、最近连接等运行状态仍保留在本机。
 
 ## 排查问题
+
+关闭窗口后再次启动，会恢复标签、分屏及最近的终端文字输出，并重新建立本地 Shell / SSH 连接。历史与新连接之间会显示分隔提示；历史仅用于查看，不会重新执行旧命令，也不会恢复原进程。输出约每 2 秒保存一次，正常关闭窗口前会再保存。
+
+历史保存在本机的窗口工作区数据中，不写入 `settings.json`。每个终端最多保留最近 10000 回滚行，另受每终端 128000 字符和窗口合计 1000000 字符限制，超限从较旧行开始缩减。vim/top 等备用屏幕及图片不恢复；手动关闭的标签不在下次启动恢复。
 
 debug 构建下，前端 JS 异常与后端 PTY 错误会写入：
 
@@ -155,7 +175,7 @@ debug 构建下，前端 JS 异常与后端 PTY 错误会写入：
 
 见 `docs/feature-list.md` 的「版本切分建议」（已按 2026-09-22 实现核验刷新），当前未完成项主要包括：
 
-- **配置**：全量设置文件化（5.1，目前仅 profiles.json 落盘）、WebDAV/Gist 同步
+- **配置**：WebDAV/Gist 同步
 - **SSH**：端口转发、Mosh、PuTTY/Tabby 导入、SSH config Include/Match、agent 证书/转发
 - **SFTP**：断点续传、压缩解压、拖出下载、递归目录传输
 - **界面**：Workspace、主题配色导入、多窗口会话迁移

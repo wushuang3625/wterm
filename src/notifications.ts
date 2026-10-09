@@ -1,3 +1,4 @@
+import { configStorage } from './config-storage';
 import {
   isPermissionGranted,
   requestPermission,
@@ -7,7 +8,7 @@ import {
 let lastKeywordNotice = 0;
 
 export function notificationsEnabled(): boolean {
-  return localStorage.getItem("wterm_notifications") !== "false";
+  return configStorage.getItem("wterm_notifications") !== "false";
 }
 
 export async function notifySystem(title: string, body: string): Promise<void> {
@@ -22,20 +23,20 @@ export async function notifySystem(title: string, body: string): Promise<void> {
 }
 
 export function notifyDisconnect(title: string): void {
-  if (localStorage.getItem("wterm_notify_disconnect") === "false") return;
+  if (configStorage.getItem("wterm_notify_disconnect") === "false") return;
   void notifySystem("wterm · 会话已断开", title);
 }
 
 export function notifyCommandCompleted(title: string, elapsedMs: number, exitCode?: string): void {
-  if (localStorage.getItem("wterm_notify_command") === "false") return;
-  const minSeconds = Math.max(0, Number(localStorage.getItem("wterm_notify_min_seconds") ?? "8") || 8);
+  if (configStorage.getItem("wterm_notify_command") === "false") return;
+  const minSeconds = Math.max(0, Number(configStorage.getItem("wterm_notify_min_seconds") ?? "8") || 8);
   if (elapsedMs < minSeconds * 1000) return;
   const status = exitCode == null || exitCode === "" ? "" : ` · exit ${exitCode}`;
   void notifySystem("wterm · 命令执行完成", `${title} · ${(elapsedMs / 1000).toFixed(1)}s${status}`);
 }
 
 export function scanKeywordNotification(title: string, text: string): void {
-  const raw = localStorage.getItem("wterm_notify_keywords")?.trim();
+  const raw = configStorage.getItem("wterm_notify_keywords")?.trim();
   if (!raw) return;
   const keywords = raw.split(/[\n,]/).map(value => value.trim()).filter(Boolean);
   const matched = keywords.find(keyword => text.toLocaleLowerCase().includes(keyword.toLocaleLowerCase()));

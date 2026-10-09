@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+ xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+ xmlns:uap10="http://schemas.microsoft.com/appx/manifest/uap/windows10/10"
+ xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+ xmlns:com="http://schemas.microsoft.com/appx/manifest/com/windows10"
+ xmlns:desktop4="http://schemas.microsoft.com/appx/manifest/desktop/windows10/4"
+ xmlns:desktop5="http://schemas.microsoft.com/appx/manifest/desktop/windows10/5"
+ IgnorableNamespaces="uap uap10 rescap com desktop4 desktop5">
+  <Identity Name="dev.wterm.Explorer" Publisher="CN=wterm" Version="@VERSION@" ProcessorArchitecture="@ARCH@" />
+  <Properties>
+    <DisplayName>wterm</DisplayName><PublisherDisplayName>wterm</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo><uap10:AllowExternalContent>true</uap10:AllowExternalContent>
+  </Properties>
+  <Dependencies><TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.19041.0" MaxVersionTested="10.0.26100.0" /></Dependencies>
+  <Resources><Resource Language="zh-CN" /></Resources>
+  <Applications>
+    <Application Id="Wterm" Executable="wterm.exe" uap10:RuntimeBehavior="win32App" uap10:TrustLevel="mediumIL">
+      <uap:VisualElements DisplayName="wterm" Description="wterm 终端" BackgroundColor="transparent"
+        Square150x150Logo="Assets\Logo.png" Square44x44Logo="Assets\SmallLogo.png" AppListEntry="none" />
+      <Extensions>
+        <com:Extension Category="windows.comServer">
+          <com:ComServer><com:SurrogateServer DisplayName="wterm Explorer command">
+            <com:Class Id="92a65a7b-50e9-4c4f-92ab-6190cbfd6c11" Path="wterm_shell.dll" ThreadingModel="STA" />
+          </com:SurrogateServer></com:ComServer>
+        </com:Extension>
+        <desktop4:Extension Category="windows.fileExplorerContextMenus">
+          <desktop4:FileExplorerContextMenus>
+            <desktop5:ItemType Type="Directory"><desktop5:Verb Id="OpenWterm" Clsid="92a65a7b-50e9-4c4f-92ab-6190cbfd6c11" /></desktop5:ItemType>
+            <desktop5:ItemType Type="Directory\Background"><desktop5:Verb Id="OpenWtermHere" Clsid="92a65a7b-50e9-4c4f-92ab-6190cbfd6c11" /></desktop5:ItemType>
+          </desktop4:FileExplorerContextMenus>
+        </desktop4:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+  <Capabilities><rescap:Capability Name="runFullTrust" /><rescap:Capability Name="unvirtualizedResources" /></Capabilities>
+</Package>

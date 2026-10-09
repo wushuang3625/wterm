@@ -1,12 +1,17 @@
 import { mockIPC, mockWindows } from '@tauri-apps/api/mocks';
 import { emit } from '@tauri-apps/api/event';
 window.emitPty = async (sid, text) => emit(`pty-output-${sid}`, Array.from(new TextEncoder().encode(text)));
+window.emitCloseRequest = async () => emit('tauri://close-requested');
 mockWindows('main');
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const state = window.testState = { calls: [], authResolve: null, transfers: new Map() };
+state.settingsPath = 'C:\\fixtures\\settings.json';
 mockIPC(async (command, args) => {
   state.calls.push({ command, args });
   switch (command) {
+    case 'get_launch_directory': return window.initialLaunchDirectory ?? null;
+    case 'get_app_settings_path': return { path: state.settingsPath, defaultPath: 'C:\\fixtures\\settings.json' };
+    case 'set_app_settings_path': state.settingsPath = args.newPath; return { path: state.settingsPath, defaultPath: 'C:\\fixtures\\settings.json' };
     case 'spawn_local': await delay(400); return args.shell || 'pwsh.exe';
     case 'list_available_shells':
       await delay(200);
@@ -20,6 +25,7 @@ mockIPC(async (command, args) => {
     case 'check_ssh_key_status': return 'ok';
     case 'list_ssh_profiles': return [];
     case 'spawn_ssh':
+      if (state.sshAutoConnect) return;
       return new Promise(resolve => {
         state.authResolve = resolve;
         args.authChannel.onmessage({ request_id: 'fixture-mfa', name: '身份验证', instructions: 'Please Enter MFA Code.', prompts: [{ prompt: 'OTP Code', echo: false }] });
@@ -28,7 +34,13 @@ mockIPC(async (command, args) => {
     case 'spawn_ssh_on_existing': await delay(20); return;
     case 'session_is_ssh': return true;
     case 'plugin:dialog|open': return ['C:\\fixtures\\upload.bin'];
-    case 'plugin:dialog|save': return 'C:\\fixtures\\download.bin';
+    case 'plugin:dialog|save': return state.downloadPath ?? 'C:\\fixtures\\download.bin';
+    case 'open_downloaded_file':
+      if (state.openFileError) throw new Error(state.openFileError);
+      return;
+    case 'open_local_terminal_path':
+      if (state.openPathError) throw new Error(state.openPathError);
+      return;
     case 'sftp_home': return '/home/' + args.sid;
     case 'sftp_list': return [{ name: 'readme.txt', path: args.path + '/readme.txt', is_dir: false, size: 100, modified: 0, permissions: 0o644 }];
     case 'sftp_transfer': return new Promise((resolve, reject) => {

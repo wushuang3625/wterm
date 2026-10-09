@@ -1,3 +1,5 @@
+import { configStorage, flushSettings, getSettingsPath, setSettingsPath } from './config-storage';
+import { save as chooseSettingsFile } from '@tauri-apps/plugin-dialog';
 import { invoke } from "@tauri-apps/api/core";
 import { newSshSession, tryReuseSshProfile, invalidateProfileMenu, type SshProfile } from "./main";
 import { actions, bindings, keyChord, shortcutPresets, type Action } from './shortcuts';
@@ -5,6 +7,7 @@ import { WTERM_THEMES, currentThemeId, setTheme, applyTheme } from "./themes";
 import { showKnownHostsManager } from "./knownhosts";
 import { deleteCredential, loadCredential, passwordCredentialKey, saveCredential } from "./credentials";
 import { applyAppearance } from "./appearance";
+import { defaultLogColorRules, loadLogColorRules, saveLogColorRules, ruleError, type LogColorRule } from './log-colors';
 
 export interface ImportedHost {
   alias: string;
@@ -257,11 +260,15 @@ export function showDialog(title: string, bodyHtml: string): {
 } {
   const mask = document.createElement("div");
   mask.className = "dialog-mask";
-  mask.innerHTML = `<div class="dialog"><h2>${title}</h2>${bodyHtml}</div>`;
+  mask.innerHTML = `<div class="dialog"><div class="dialog-header"><h2>${title}</h2><button type="button" class="dialog-close" aria-label="关闭" title="关闭"><svg viewBox="0 0 12 12" aria-hidden="true"><line x1="3" y1="3" x2="9" y2="9"/><line x1="9" y1="3" x2="3" y2="9"/></svg></button></div>${bodyHtml}</div>`;
   document.body.appendChild(mask);
   const close = () => mask.remove();
   mask.onclick = (e) => {
     if (e.target === mask) close();
+  };
+  // 关闭按钮走与"点击遮罩"相同的语义，调用方覆盖 mask.onclick 时行为一致（如设置弹窗取消时恢复主题）
+  mask.querySelector<HTMLButtonElement>(".dialog-close")!.onclick = () => {
+    mask.dispatchEvent(new MouseEvent("click"));
   };
   return { mask, close };
 }
@@ -388,19 +395,19 @@ export interface ShellInfo {
 }
 
 export function getDefaultShellCommand(): string | null {
-  return localStorage.getItem("wterm_default_shell") || null;
+  return configStorage.getItem("wterm_default_shell") || null;
 }
 
 export function setDefaultShellCommand(cmd: string): void {
-  localStorage.setItem("wterm_default_shell", cmd);
+  configStorage.setItem("wterm_default_shell", cmd);
 }
 
 export function getDefaultShellName(): string | null {
-  return localStorage.getItem("wterm_default_shell_name") || null;
+  return configStorage.getItem("wterm_default_shell_name") || null;
 }
 
 export function setDefaultShellName(name: string): void {
-  localStorage.setItem("wterm_default_shell_name", name);
+  configStorage.setItem("wterm_default_shell_name", name);
 }
 
 export async function showSettingsDialog(): Promise<void> {
@@ -428,19 +435,19 @@ export async function showSettingsDialog(): Promise<void> {
     <div class="settings-modal">
       <nav class="settings-sidebar">
         <div class="settings-nav-item active" data-tab="general">
-          <span class="icon">⚙️</span>
+          <span class="icon"><svg viewBox="0 0 16 16" aria-hidden="true"><line x1="2.5" y1="5" x2="13.5" y2="5"/><circle cx="5.5" cy="5" r="1.8"/><line x1="2.5" y1="11" x2="13.5" y2="11"/><circle cx="10.5" cy="11" r="1.8"/></svg></span>
           <span>常规设置</span>
         </div>
         <div class="settings-nav-item" data-tab="security">
-          <span class="icon">🔒</span>
+          <span class="icon"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.2 L13 4.2 V8.4 C13 11.6 10.8 13.4 8 14.3 C5.2 13.4 3 11.6 3 8.4 V4.2 Z"/></svg></span>
           <span>凭据与安全</span>
         </div>
         <div class="settings-nav-item" data-tab="shortcuts">
-          <span class="icon">⌨️</span>
+          <span class="icon"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="4.2" width="12" height="7.6" rx="1.5"/><path d="M4.4 7h1.4 M7.3 7h1.4 M10.2 7h1.4 M5.2 9.6h5.6"/></svg></span>
           <span>快捷键</span>
         </div>
         <div class="settings-nav-item" data-tab="about">
-          <span class="icon">ℹ️</span>
+          <span class="icon"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.6"/><line x1="8" y1="7.4" x2="8" y2="11.2"/><circle class="dot" cx="8" cy="5" r=".4"/></svg></span>
           <span>关于 wterm</span>
         </div>
       </nav>
@@ -472,6 +479,11 @@ export async function showSettingsDialog(): Promise<void> {
           <p class="setting-hint">仅影响新终端；关闭后保留你的 PowerShell 启动脚本。</p>
           <label class="setting-check"><input type="checkbox" id="cfg-webgl" /> WebGL 渲染（大量滚动时可启用）</label>
           <p class="setting-hint">渲染方式应用于新终端。</p>
+          <div class="field"><label for="cfg-blocks-mode">命令块</label><select id="cfg-blocks-mode">
+            <option value="off">关闭</option>
+            <option value="shell">Shell 标记（准确）</option>
+            <option value="compatible">输入推断（兼容）</option>
+          </select><p class="setting-hint">终端保持完整大小。点击右下角「命令块」可切换到命令历史视图，复制、折叠或重新运行；关闭后返回终端。Shell 标记模式需要 OSC 133 提示符；输入推断模式适用于未集成的 Shell，但复杂行编辑和交互程序可能产生不准确的块。设置立即应用于现有终端。</p></div>
           <div class="field"><label>右键行为</label><select id="cfg-right-click">
             <option value="copy-paste">有选区时复制，否则粘贴</option><option value="copy">仅复制</option>
             <option value="paste">仅粘贴</option><option value="disabled">禁用</option>
@@ -484,12 +496,15 @@ export async function showSettingsDialog(): Promise<void> {
               <div class="field"><label for="cfg-line-height">行高</label><input id="cfg-line-height" type="number" min="1" max="2" step="0.05" /><p class="setting-hint">1–2 倍</p></div>
               <div class="field"><label for="cfg-letter-spacing">字距</label><input id="cfg-letter-spacing" type="number" min="0" max="5" step="0.1" /><p class="setting-hint">0–5 px</p></div>
             </div>
+            <div class="font-preview"><span>字形预览 · 比较易混淆字符</span><code id="cfg-font-preview">0 O o　1 l I |　5 S　8 B<br>const value = ({ id: 10, ok: true });</code></div>
+            <button type="button" class="btn font-reading-preset" id="cfg-reading-preset">应用长时间阅读预设</button>
           </div>
           <div class="settings-card log-display-card">
             <div class="settings-card-title">日志与滚动</div>
             <label class="setting-check"><input type="checkbox" id="cfg-log-colors" /><span>日志分色</span></label>
-            <p class="setting-hint">自动区分时间、日志级别和异常。保留原有颜色与复制内容；全屏程序保持原样。</p>
-            <div class="log-color-legend"><span class="log-info">INFO</span><span class="log-warn">WARN</span><span class="log-error">ERROR / 异常</span><span class="log-debug">DEBUG</span></div>
+            <p class="setting-hint">默认颜色随主题变化；自定义颜色固定。按顺序匹配，第一条命中的规则应用于整行（含折行）。复制内容不变；全屏程序保持原样。</p>
+            <div id="cfg-log-rule-list" class="log-rule-list"></div>
+            <div class="log-rule-actions"><button type="button" class="btn" id="cfg-add-log-rule">添加规则</button><button type="button" class="btn" id="cfg-reset-log-rules">恢复默认规则</button></div>
             <div class="field"><label for="cfg-scrollback">滚动缓冲行数</label><input id="cfg-scrollback" type="number" min="100" max="100000" /><span class="setting-hint">100–100000 行，新终端生效</span></div>
           </div>
           <div class="field" style="margin-top:16px;">
@@ -508,6 +523,14 @@ export async function showSettingsDialog(): Promise<void> {
             <label class="setting-check"><input type="checkbox" id="cfg-notify-command" /> 长命令完成时通知</label>
             <div class="field"><label>长命令阈值（秒）</label><input id="cfg-notify-min-seconds" type="number" min="0" max="86400" /></div>
             <div class="field"><label>输出关键词（逗号分隔）</label><input id="cfg-notify-keywords" placeholder="ERROR, FAILED, completed" /></div>
+          </div>
+          <div class="settings-card">
+            <div class="settings-card-title">配置文件</div>
+            <div class="field"><label for="cfg-settings-path">设置文件路径</label>
+              <div class="settings-path-row"><input id="cfg-settings-path" type="text" spellcheck="false" placeholder="选择或输入 settings.json 的绝对路径" /><button type="button" class="btn" id="cfg-settings-browse">选择位置</button></div>
+              <p class="setting-hint">选择新的 JSON 文件路径；保存时会把当前设置写入该位置。旧文件会保留。</p>
+            </div>
+            <button type="button" class="btn" id="cfg-settings-default">恢复默认路径</button>
           </div>
         </section>
 
@@ -535,12 +558,14 @@ export async function showSettingsDialog(): Promise<void> {
         <!-- 3. 快捷键 -->
         <section class="settings-pane" id="pane-shortcuts">
           <h3 class="settings-title">全局与常用快捷键</h3>
-          <p class="setting-hint">点击输入框后按组合键。分屏仅影响当前标签，可连续拆分；关闭窗格会自动合并剩余布局。</p>
-          <div class="field"><label>快捷键预设</label><select id="cfg-shortcut-preset"><option value="custom">自定义 / 当前</option><option value="default">wterm 默认</option><option value="vscode">VS Code 风格</option><option value="iterm2">iTerm2 风格</option></select></div>
+          <p class="setting-hint">点击键位框后按下新的组合键即可修改。分屏仅影响当前标签，可连续拆分；关闭窗格会自动合并剩余布局。</p>
+          <div class="shortcut-toolbar">
+            <select id="cfg-shortcut-preset" aria-label="快捷键预设"><option value="custom">自定义 / 当前</option><option value="default">wterm 默认</option><option value="vscode">VS Code 风格</option><option value="iterm2">iTerm2 风格</option></select>
+            <input id="cfg-shortcut-filter" type="search" placeholder="筛选快捷键…" aria-label="筛选快捷键" />
+            <button class="btn" id="cfg-reset-shortcuts">恢复默认</button>
+          </div>
           <div class="shortcut-list" id="shortcut-editor"></div>
-          <button class="btn" id="cfg-reset-shortcuts">恢复默认快捷键</button>
           <p class="setting-hint">拖动标签排序；中键关闭整个标签。拖动窗格右上角手柄交换位置；拖动分隔条调节比例，双击等分。</p>
-          <p id="cfg-error" class="dialog-error" role="alert"></p>
         </section>
 
         <!-- 4. 关于 -->
@@ -549,13 +574,13 @@ export async function showSettingsDialog(): Promise<void> {
           <div style="font-size:13px;color:var(--text-dim);line-height:1.8;">
             <p><strong style="color:var(--text);">wterm</strong> — 高性能、设计驱动的现代化 SSH 与终端工作台。</p>
             <p>基于 Rust (Tauri 2) + xterm.js + russh 构建，支持高性能 PTY、ZMODEM (rz/sz)、多通道复用及左右多屏分屏。</p>
-            <p style="margin-top:12px;font-size:12px;">版本: v0.1.4</p>
+            <p style="margin-top:12px;font-size:12px;">版本: v0.1.5</p>
           </div>
         </section>
       </main>
     </div>
     <div class="dialog-actions" style="margin-top:16px;">
-      <div></div>
+      <p id="cfg-error" class="dialog-error" role="alert"></p>
       <div style="display:flex;gap:8px">
         <button class="btn" id="cfg-cancel">取消</button>
         <button class="btn primary" id="cfg-save">保存</button>
@@ -570,6 +595,29 @@ export async function showSettingsDialog(): Promise<void> {
 
   const $ = <T extends HTMLElement>(sel: string) => mask.querySelector<T>(sel)!;
 
+  let settingsPath = '';
+  let defaultSettingsPath = '';
+  const pathInput = $<HTMLInputElement>('#cfg-settings-path');
+  try {
+    const location = await getSettingsPath();
+    settingsPath = location.path;
+    defaultSettingsPath = location.defaultPath;
+    pathInput.value = settingsPath;
+  } catch (error) {
+    pathInput.disabled = true;
+    $('#cfg-settings-browse').setAttribute('disabled', '');
+    $('#cfg-settings-default').setAttribute('disabled', '');
+    $('#cfg-error').textContent = `读取配置文件路径失败：${String(error)}`;
+  }
+  $('#cfg-settings-browse').onclick = async () => {
+    const selected = await chooseSettingsFile({
+      defaultPath: pathInput.value || defaultSettingsPath,
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+    }).catch(error => { $('#cfg-error').textContent = `选择路径失败：${String(error)}`; return null; });
+    if (selected) pathInput.value = selected;
+  };
+  $('#cfg-settings-default').onclick = () => { pathInput.value = defaultSettingsPath; };
+
   $<HTMLSelectElement>("#cfg-theme").value = currentThemeId();
   const originalThemeId = currentThemeId();
 
@@ -583,32 +631,51 @@ export async function showSettingsDialog(): Promise<void> {
 
   // 主题实时预览：选择后立即变换，取消恢复，保存确认
   $<HTMLSelectElement>("#cfg-theme").onchange = () => {
-    applyTheme($<HTMLSelectElement>("#cfg-theme").value);
+    const selectedTheme = $<HTMLSelectElement>("#cfg-theme").value;
+    applyTheme(selectedTheme);
+    if (logRulesAreDefault) { logRules = defaultLogColorRules(selectedTheme); renderLogRules(); }
   };
   $<HTMLInputElement>("#cfg-copy-on-select").checked = isCopyOnSelectEnabled();
-  $<HTMLInputElement>("#cfg-no-profile").checked = localStorage.getItem("wterm_no_profile") === "true";
-  $<HTMLInputElement>("#cfg-webgl").checked = localStorage.getItem("wterm_webgl") === "true";
-  $<HTMLInputElement>("#cfg-bg-opacity").value = localStorage.getItem("wterm_background_opacity") ?? "1";
-  $<HTMLSelectElement>("#cfg-window-effect").value = localStorage.getItem("wterm_window_effect") ?? "none";
-  $<HTMLInputElement>("#cfg-background-image").value = localStorage.getItem("wterm_background_image") ?? "";
-  $<HTMLInputElement>("#cfg-background-image-opacity").value = localStorage.getItem("wterm_background_image_opacity") ?? "0.22";
-  $<HTMLInputElement>("#cfg-notifications").checked = localStorage.getItem("wterm_notifications") !== "false";
-  $<HTMLInputElement>("#cfg-notify-disconnect").checked = localStorage.getItem("wterm_notify_disconnect") !== "false";
-  $<HTMLInputElement>("#cfg-notify-command").checked = localStorage.getItem("wterm_notify_command") !== "false";
-  $<HTMLInputElement>("#cfg-notify-min-seconds").value = localStorage.getItem("wterm_notify_min_seconds") ?? "8";
-  $<HTMLInputElement>("#cfg-notify-keywords").value = localStorage.getItem("wterm_notify_keywords") ?? "";
-  $<HTMLInputElement>("#cfg-keychain-enabled").checked = localStorage.getItem("wterm_keychain_enabled") !== "false";
+  $<HTMLInputElement>("#cfg-no-profile").checked = configStorage.getItem("wterm_no_profile") === "true";
+  $<HTMLInputElement>("#cfg-webgl").checked = configStorage.getItem("wterm_webgl") === "true";
+  $<HTMLSelectElement>('#cfg-blocks-mode').value = configStorage.getItem('wterm_blocks_mode') || 'off';
+  $<HTMLInputElement>("#cfg-bg-opacity").value = configStorage.getItem("wterm_background_opacity") ?? "1";
+  $<HTMLSelectElement>("#cfg-window-effect").value = configStorage.getItem("wterm_window_effect") ?? "none";
+  $<HTMLInputElement>("#cfg-background-image").value = configStorage.getItem("wterm_background_image") ?? "";
+  $<HTMLInputElement>("#cfg-background-image-opacity").value = configStorage.getItem("wterm_background_image_opacity") ?? "0.22";
+  $<HTMLInputElement>("#cfg-notifications").checked = configStorage.getItem("wterm_notifications") !== "false";
+  $<HTMLInputElement>("#cfg-notify-disconnect").checked = configStorage.getItem("wterm_notify_disconnect") !== "false";
+  $<HTMLInputElement>("#cfg-notify-command").checked = configStorage.getItem("wterm_notify_command") !== "false";
+  $<HTMLInputElement>("#cfg-notify-min-seconds").value = configStorage.getItem("wterm_notify_min_seconds") ?? "8";
+  $<HTMLInputElement>("#cfg-notify-keywords").value = configStorage.getItem("wterm_notify_keywords") ?? "";
+  $<HTMLInputElement>("#cfg-keychain-enabled").checked = configStorage.getItem("wterm_keychain_enabled") !== "false";
 
-  $<HTMLSelectElement>('#cfg-right-click').value = localStorage.getItem('wterm_right_click') || 'copy-paste';
+  $<HTMLSelectElement>('#cfg-right-click').value = configStorage.getItem('wterm_right_click') || 'copy-paste';
   const numeric = [
     ['font-size', 'font_size', 14, 8, 40], ['line-height', 'line_height', 1.25, 1, 2],
     ['letter-spacing', 'letter_spacing', 0, 0, 5], ['scrollback', 'scrollback', 10000, 100, 100000],
   ] as const;
-  for (const [id, key, fallback] of numeric) $<HTMLInputElement>(`#cfg-${id}`).value = localStorage.getItem(`wterm_${key}`) ?? String(fallback);
-  $<HTMLInputElement>('#cfg-font-family').value = localStorage.getItem('wterm_font_family') || '';
+  for (const [id, key, fallback] of numeric) $<HTMLInputElement>(`#cfg-${id}`).value = configStorage.getItem(`wterm_${key}`) ?? String(fallback);
+  $<HTMLInputElement>('#cfg-font-family').value = configStorage.getItem('wterm_font_family') || '';
 
   // 终端字体下拉：自定义 combobox（原生 datalist 弹窗在 WebView2 深色主题下渲染为亮色）
   const fontInput = $<HTMLInputElement>('#cfg-font-family');
+  const updateFontPreview = () => {
+    const preview = $('#cfg-font-preview');
+    preview.style.fontFamily = fontInput.value.trim() || "'Cascadia Code', 'JetBrains Mono', Consolas, monospace";
+    preview.style.fontSize = `${Number($<HTMLInputElement>('#cfg-font-size').value) || 14}px`;
+    preview.style.lineHeight = String(Number($<HTMLInputElement>('#cfg-line-height').value) || 1.25);
+    preview.style.letterSpacing = `${Number($<HTMLInputElement>('#cfg-letter-spacing').value) || 0}px`;
+  };
+  for (const id of ['font-size', 'line-height', 'letter-spacing']) $<HTMLInputElement>(`#cfg-${id}`).addEventListener('input', updateFontPreview);
+  fontInput.addEventListener('input', updateFontPreview);
+  $('#cfg-reading-preset').onclick = () => {
+    $<HTMLInputElement>('#cfg-font-size').value = '16';
+    $<HTMLInputElement>('#cfg-line-height').value = '1.4';
+    $<HTMLInputElement>('#cfg-letter-spacing').value = '0.3';
+    updateFontPreview();
+  };
+  updateFontPreview();
   const fontList = $('#font-combobox-list')!;
   const fontOptions = ['Cascadia Code', 'Consolas', 'JetBrains Mono', 'Courier New'];
   let activeFont = -1;
@@ -645,6 +712,7 @@ export async function showSettingsDialog(): Promise<void> {
     const li = (e.target as HTMLElement).closest('li');
     if (!li) return;
     fontInput.value = li.dataset.value!;
+    updateFontPreview();
     closeFontList();
     fontInput.focus();
   });
@@ -659,6 +727,7 @@ export async function showSettingsDialog(): Promise<void> {
     } else if (e.key === 'Enter' && !fontList.hidden && activeFont >= 0 && items[activeFont]) {
       e.preventDefault();
       fontInput.value = items[activeFont].dataset.value!;
+      updateFontPreview();
       closeFontList();
     } else if (e.key === 'Escape') closeFontList();
   });
@@ -666,9 +735,44 @@ export async function showSettingsDialog(): Promise<void> {
     if (!fontList.hidden && !(e.target as HTMLElement).closest('.font-combobox')) closeFontList();
   });
   $('.settings-content')!.addEventListener('scroll', () => { if (!fontList.hidden) placeFontList(); });
-  $<HTMLInputElement>('#cfg-log-colors').checked = localStorage.getItem('wterm_log_colors') !== 'false';
+  $<HTMLInputElement>('#cfg-log-colors').checked = configStorage.getItem('wterm_log_colors') !== 'false';
+  let logRules = loadLogColorRules();
+  let logRulesAreDefault = JSON.stringify(logRules) === JSON.stringify(defaultLogColorRules(originalThemeId));
+  const markCustomLogRules = () => { logRulesAreDefault = false; };
+  const logRuleList = $('#cfg-log-rule-list');
+  const renderLogRules = () => {
+    logRuleList.replaceChildren();
+    logRules.forEach((rule, index) => {
+      const row = document.createElement('div'); row.className = 'log-rule';
+      const pattern = document.createElement('input'); pattern.className = 'log-rule-pattern'; pattern.type = 'text'; pattern.maxLength = 256; pattern.placeholder = '匹配文本或正则表达式'; pattern.value = rule.pattern; pattern.setAttribute('aria-label', `规则 ${index + 1} 匹配文本`);
+      pattern.oninput = () => { rule.pattern = pattern.value; markCustomLogRules(); };
+      const regexLabel = document.createElement('label'); regexLabel.className = 'log-rule-regex';
+      const regex = document.createElement('input'); regex.type = 'checkbox'; regex.checked = rule.regex; regex.onchange = () => { rule.regex = regex.checked; markCustomLogRules(); };
+      regexLabel.append(regex, document.createTextNode('正则'));
+      const foreground = document.createElement('input'); foreground.type = 'color'; foreground.value = rule.foreground; foreground.setAttribute('aria-label', `规则 ${index + 1} 前景色`); foreground.oninput = () => { rule.foreground = foreground.value; markCustomLogRules(); };
+      const foregroundLabel = document.createElement('label'); foregroundLabel.className = 'log-rule-color'; foregroundLabel.append(document.createTextNode('前景'), foreground);
+      const background = document.createElement('input'); background.type = 'color'; background.value = rule.background || '#303540'; background.disabled = !rule.background; background.setAttribute('aria-label', `规则 ${index + 1} 背景色`); background.oninput = () => { rule.background = background.value; markCustomLogRules(); };
+      const useBackground = document.createElement('input'); useBackground.type = 'checkbox'; useBackground.checked = !!rule.background; useBackground.setAttribute('aria-label', `规则 ${index + 1} 启用背景色`); useBackground.onchange = () => { background.disabled = !useBackground.checked; rule.background = useBackground.checked ? background.value : ''; markCustomLogRules(); };
+      const backgroundLabel = document.createElement('label'); backgroundLabel.className = 'log-rule-color'; backgroundLabel.append(useBackground, document.createTextNode('背景'), background);
+      const moveUp = document.createElement('button'); moveUp.type = 'button'; moveUp.className = 'log-rule-icon'; moveUp.textContent = '↑'; moveUp.title = '上移规则'; moveUp.disabled = index === 0; moveUp.onclick = () => { [logRules[index - 1], logRules[index]] = [logRules[index], logRules[index - 1]]; markCustomLogRules(); renderLogRules(); };
+      const moveDown = document.createElement('button'); moveDown.type = 'button'; moveDown.className = 'log-rule-icon'; moveDown.textContent = '↓'; moveDown.title = '下移规则'; moveDown.disabled = index === logRules.length - 1; moveDown.onclick = () => { [logRules[index + 1], logRules[index]] = [logRules[index], logRules[index + 1]]; markCustomLogRules(); renderLogRules(); };
+      const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'log-rule-icon'; remove.textContent = '×'; remove.title = '删除规则'; remove.onclick = () => { logRules.splice(index, 1); markCustomLogRules(); renderLogRules(); };
+      row.append(pattern, regexLabel, foregroundLabel, backgroundLabel, moveUp, moveDown, remove); logRuleList.append(row);
+    });
+  };
+  renderLogRules();
+  $('#cfg-add-log-rule').onclick = () => { if (logRules.length >= 50) return; logRules.push({ pattern: '', regex: false, foreground: '#ffffff', background: '' }); markCustomLogRules(); renderLogRules(); logRuleList.querySelector<HTMLInputElement>('.log-rule:last-child .log-rule-pattern')?.focus(); };
+  $('#cfg-reset-log-rules').onclick = () => { logRules = defaultLogColorRules($<HTMLSelectElement>('#cfg-theme').value); logRulesAreDefault = true; renderLogRules(); };
   const shortcuts = bindings();
-  for (const key of Object.keys(actions) as Action[]) {
+  const shortcutEditor = $('#shortcut-editor');
+  const shortcutGroups: Array<[string, Action[]]> = [
+    ['标签页', ['newTab', 'nextTab', 'previousTab']],
+    ['窗格与布局', ['closePane', 'splitH', 'splitV', 'grid3', 'grid4', 'grid9', 'nextPane', 'previousPane']],
+    ['搜索与面板', ['search', 'quickConnect', 'commandPalette']],
+    ['连接与工具', ['connections', 'favorites', 'sftp', 'batch', 'settings', 'openDirectory', 'newWindow', 'reconnect']],
+    ['视图', ['fontLarger', 'fontSmaller']],
+  ];
+  const renderShortcutRow = (key: Action) => {
     const row = document.createElement('label'); row.className = 'shortcut-item';
     const text = document.createElement('span'); text.className = 'desc'; text.textContent = actions[key][0];
     const input = document.createElement('input'); input.className = 'shortcut-input'; input.readOnly = true; input.value = shortcuts[key]; input.dataset.action = key;
@@ -679,8 +783,45 @@ export async function showSettingsDialog(): Promise<void> {
       if (!(e.ctrlKey || e.altKey || e.metaKey)) return;
       input.value = keyChord(e);
     };
-    row.append(text, input); $('#shortcut-editor').append(row);
+    row.append(text, input); shortcutEditor.append(row);
+  };
+  const groupedActions = new Set<Action>();
+  for (const [groupName, keys] of shortcutGroups) {
+    const heading = document.createElement('div'); heading.className = 'shortcut-group-title'; heading.textContent = groupName;
+    shortcutEditor.append(heading);
+    for (const key of keys) { groupedActions.add(key); renderShortcutRow(key); }
   }
+  // 兜底：actions 今后新增而分组表未同步时，归入"其他"，保证配置项不丢失
+  const ungrouped = (Object.keys(actions) as Action[]).filter(key => !groupedActions.has(key));
+  if (ungrouped.length) {
+    const heading = document.createElement('div'); heading.className = 'shortcut-group-title'; heading.textContent = '其他';
+    shortcutEditor.append(heading);
+    for (const key of ungrouped) renderShortcutRow(key);
+  }
+  // 筛选：描述或键位包含关键字时保留；无可见项的分组标题一并隐藏
+  const filterEmpty = document.createElement('div');
+  filterEmpty.className = 'shortcut-filter-empty';
+  filterEmpty.textContent = '没有匹配的快捷键';
+  filterEmpty.hidden = true;
+  shortcutEditor.append(filterEmpty);
+  $<HTMLInputElement>('#cfg-shortcut-filter').oninput = event => {
+    const query = (event.currentTarget as HTMLInputElement).value.trim().toLowerCase();
+    shortcutEditor.querySelectorAll<HTMLElement>('.shortcut-item').forEach(row => {
+      const desc = row.querySelector('.desc')?.textContent?.toLowerCase() ?? '';
+      const chord = row.querySelector<HTMLInputElement>('.shortcut-input')?.value.toLowerCase() ?? '';
+      row.hidden = !!query && !desc.includes(query) && !chord.includes(query);
+    });
+    shortcutEditor.querySelectorAll<HTMLElement>('.shortcut-group-title').forEach(title => {
+      let sibling = title.nextElementSibling;
+      let hasVisible = false;
+      while (sibling && !sibling.classList.contains('shortcut-group-title')) {
+        if (sibling instanceof HTMLElement && !sibling.hidden && sibling.classList.contains('shortcut-item')) { hasVisible = true; break; }
+        sibling = sibling.nextElementSibling;
+      }
+      title.hidden = !!query && !hasVisible;
+    });
+    filterEmpty.hidden = !!shortcutEditor.querySelector('.shortcut-item:not([hidden])');
+  };
   $<HTMLSelectElement>("#cfg-shortcut-preset").onchange = event => {
     const preset = shortcutPresets[(event.currentTarget as HTMLSelectElement).value];
     if (!preset) return;
@@ -730,7 +871,9 @@ export async function showSettingsDialog(): Promise<void> {
     close();
   };
 
-  $("#cfg-save").onclick = () => {
+  $("#cfg-save").onclick = async () => {
+    const invalidRule = logRules.findIndex(rule => ruleError(rule));
+    if (invalidRule >= 0) { $('#cfg-error').textContent = `规则 ${invalidRule + 1}：${ruleError(logRules[invalidRule])}`; logRuleList.querySelectorAll<HTMLInputElement>('.log-rule-pattern')[invalidRule]?.focus(); return; }
     const updated: Partial<Record<Action, string>> = {};
     const used = new Set(['ctrl+v', 'meta+v']);
     for (const input of mask.querySelectorAll<HTMLInputElement>('[data-action]')) {
@@ -741,12 +884,13 @@ export async function showSettingsDialog(): Promise<void> {
       const input = $<HTMLInputElement>(`#cfg-${id}`), value = Number(input.value);
       if (!input.value || !Number.isFinite(value) || value < min || value > max) { input.reportValidity(); return; }
     }
-    localStorage.setItem('wterm_log_colors', String($<HTMLInputElement>('#cfg-log-colors').checked));
-    localStorage.setItem('wterm_font_family', $<HTMLInputElement>('#cfg-font-family').value.trim());
-    localStorage.setItem('wterm_shortcuts', JSON.stringify(updated));
+    configStorage.setItem('wterm_log_colors', String($<HTMLInputElement>('#cfg-log-colors').checked));
+    configStorage.setItem('wterm_font_family', $<HTMLInputElement>('#cfg-font-family').value.trim());
+    configStorage.setItem('wterm_shortcuts', JSON.stringify(updated));
     setTheme($<HTMLSelectElement>("#cfg-theme").value);
-    localStorage.setItem('wterm_right_click', $<HTMLSelectElement>('#cfg-right-click').value);
-    for (const [id, key] of numeric) localStorage.setItem(`wterm_${key}`, $<HTMLInputElement>(`#cfg-${id}`).value);
+    saveLogColorRules(logRulesAreDefault ? undefined : logRules);
+    configStorage.setItem('wterm_right_click', $<HTMLSelectElement>('#cfg-right-click').value);
+    for (const [id, key] of numeric) configStorage.setItem(`wterm_${key}`, $<HTMLInputElement>(`#cfg-${id}`).value);
     const sel = $<HTMLSelectElement>("#cfg-default-shell");
     const chosenCmd = sel.value;
     const chosenName = sel.selectedOptions[0]?.getAttribute("data-name") || "本地终端";
@@ -756,18 +900,31 @@ export async function showSettingsDialog(): Promise<void> {
     }
     const copyOnSelect = $<HTMLInputElement>("#cfg-copy-on-select").checked;
     setCopyOnSelectEnabled(copyOnSelect);
-    localStorage.setItem("wterm_no_profile", String($<HTMLInputElement>("#cfg-no-profile").checked));
-    localStorage.setItem("wterm_webgl", String($<HTMLInputElement>("#cfg-webgl").checked));
-    localStorage.setItem("wterm_background_opacity", $<HTMLInputElement>("#cfg-bg-opacity").value);
-    localStorage.setItem("wterm_window_effect", $<HTMLSelectElement>("#cfg-window-effect").value);
-    localStorage.setItem("wterm_background_image", $<HTMLInputElement>("#cfg-background-image").value.trim());
-    localStorage.setItem("wterm_background_image_opacity", $<HTMLInputElement>("#cfg-background-image-opacity").value);
-    localStorage.setItem("wterm_notifications", String($<HTMLInputElement>("#cfg-notifications").checked));
-    localStorage.setItem("wterm_notify_disconnect", String($<HTMLInputElement>("#cfg-notify-disconnect").checked));
-    localStorage.setItem("wterm_notify_command", String($<HTMLInputElement>("#cfg-notify-command").checked));
-    localStorage.setItem("wterm_notify_min_seconds", $<HTMLInputElement>("#cfg-notify-min-seconds").value);
-    localStorage.setItem("wterm_notify_keywords", $<HTMLInputElement>("#cfg-notify-keywords").value.trim());
-    localStorage.setItem("wterm_keychain_enabled", String($<HTMLInputElement>("#cfg-keychain-enabled").checked));
+    configStorage.setItem("wterm_no_profile", String($<HTMLInputElement>("#cfg-no-profile").checked));
+    configStorage.setItem("wterm_webgl", String($<HTMLInputElement>("#cfg-webgl").checked));
+    configStorage.setItem('wterm_blocks_mode', $<HTMLSelectElement>('#cfg-blocks-mode').value);
+    window.dispatchEvent(new Event('wterm-blocks-mode-change'));
+    configStorage.setItem("wterm_background_opacity", $<HTMLInputElement>("#cfg-bg-opacity").value);
+    configStorage.setItem("wterm_window_effect", $<HTMLSelectElement>("#cfg-window-effect").value);
+    configStorage.setItem("wterm_background_image", $<HTMLInputElement>("#cfg-background-image").value.trim());
+    configStorage.setItem("wterm_background_image_opacity", $<HTMLInputElement>("#cfg-background-image-opacity").value);
+    configStorage.setItem("wterm_notifications", String($<HTMLInputElement>("#cfg-notifications").checked));
+    configStorage.setItem("wterm_notify_disconnect", String($<HTMLInputElement>("#cfg-notify-disconnect").checked));
+    configStorage.setItem("wterm_notify_command", String($<HTMLInputElement>("#cfg-notify-command").checked));
+    configStorage.setItem("wterm_notify_min_seconds", $<HTMLInputElement>("#cfg-notify-min-seconds").value);
+    configStorage.setItem("wterm_notify_keywords", $<HTMLInputElement>("#cfg-notify-keywords").value.trim());
+    configStorage.setItem("wterm_keychain_enabled", String($<HTMLInputElement>("#cfg-keychain-enabled").checked));
+    try {
+      await flushSettings();
+      if (!pathInput.disabled && pathInput.value.trim() !== settingsPath) {
+        const location = await setSettingsPath(pathInput.value.trim());
+        settingsPath = location.path;
+        pathInput.value = settingsPath;
+      }
+    } catch (error) {
+      $('#cfg-error').textContent = `保存设置文件失败：${String(error)}`;
+      return;
+    }
     void applyAppearance();
     close();
   };

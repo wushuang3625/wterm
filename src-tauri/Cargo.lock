@@ -6579,7 +6579,7 @@ dependencies = [
 
 [[package]]
 name = "wterm"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -6596,6 +6596,7 @@ dependencies = [
  "tauri-plugin-notification",
  "tokio",
  "window-vibrancy",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

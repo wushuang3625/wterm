@@ -18,7 +18,7 @@ pub enum SessionKind {
     /// 本地伪终端
     Local {
         writer: Mutex<Box<dyn Write + Send>>,
-        child: Mutex<Box<dyn portable_pty::Child + Send>>,
+        child: std::sync::Arc<Mutex<Box<dyn portable_pty::Child + Send>>>,
         master: Mutex<Box<dyn portable_pty::MasterPty + Send>>,
     },
     /// SSH 远程通道：由独立 tokio 任务持有 shell channel，命令经 mpsc 下发。
