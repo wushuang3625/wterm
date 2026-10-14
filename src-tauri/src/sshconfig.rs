@@ -218,6 +218,7 @@ pub fn scan() -> anyhow::Result<Vec<ImportedHost>> {
 impl ImportedHost {
     pub fn into_profile(self) -> crate::profiles::SshProfile {
         crate::profiles::SshProfile {
+            id: None,
             name: self.alias, host: self.host, port: self.port, username: self.username,
             auth: if self.identity_file.is_some() { "key" } else { "agent" }.into(), identity_file: self.identity_file,
             proxy_jump: self.proxy_jump, group: None, tags: vec![], color: None, login_script: None,

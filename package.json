@@ -1,7 +1,7 @@
 {
   "name": "wterm",
   "private": true,
-  "version": "0.1.5",
+  "version": "0.1.6",
   "type": "module",
   "description": "wterm — 开源、轻量、设计驱动的 SSH 工作台",
   "scripts": {

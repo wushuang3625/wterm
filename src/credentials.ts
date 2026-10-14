@@ -1,7 +1,7 @@
 import { configStorage } from './config-storage';
 import { invoke } from "@tauri-apps/api/core";
 
-export type CredentialKind = "password" | "passphrase";
+export type CredentialKind = "password" | "passphrase" | "api_key";
 
 export async function loadCredential(kind: CredentialKind, key: string): Promise<string | undefined> {
   if (!key || configStorage.getItem("wterm_keychain_enabled") === "false") return;

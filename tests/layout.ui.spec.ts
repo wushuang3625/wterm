@@ -111,10 +111,11 @@ test('tab clicks still activate; sorting survives title updates and cancels outs
   const ids = await page.locator('.tab').evaluateAll(els => els.map(el => (el as HTMLElement).dataset.sid));
   await page.locator('.tab .label').first().click();
   await expect(page.locator('.tab.active')).toHaveAttribute('data-sid', ids[0]!);
-  const source = await page.locator('.tab .label').first().boundingBox();
-  const target = await page.locator('.tab .label').last().boundingBox();
   const start = async () => {
-    await page.mouse.move(source!.x + source!.width / 2, source!.y + source!.height / 2);
+    // Cancelling a drag can animate tabs back to their original slots. Hover
+    // waits for a stable current position rather than reusing stale coordinates.
+    await page.locator('.tab .label').first().hover();
+    const target = await page.locator('.tab .label').last().boundingBox();
     await page.mouse.down();
     await page.mouse.move(target!.x + target!.width / 2, target!.y + target!.height / 2, { steps: 6 });
     await expect(page.locator('.tab.dragging')).toHaveCount(1);

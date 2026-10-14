@@ -26,6 +26,7 @@ import { captureHistory, restoreHistory, MAX_HISTORY_CHARS, WORKSPACE_HISTORY_CH
 import { listFavorites, favoriteIcon, favoriteTypeLabel, favoriteScriptEnvironmentLabel, normalizeFavoriteCommand, showFavoritesManager, shellBasename, type Favorite } from "./favorites";
 import { applyTheme, getTerminalTheme } from "./themes";
 import { applyAppearance } from "./appearance";
+import { aiReady } from './ai-config';
 import { loadCredential, passwordCredentialKey } from "./credentials";
 
 applyTheme();
@@ -44,6 +45,7 @@ window.addEventListener("unhandledrejection", (e) => {
 });
 
 export interface SshProfile {
+  id?: string | null;
   name: string;
   host: string;
   port: number;
@@ -84,6 +86,9 @@ app.innerHTML = `
       <button id="search-next" title="下一个 (Enter)">↓</button>
       <button id="search-close" title="关闭 (Esc)">✕</button>
     </div>
+    <button id="btn-ai" class="tb-btn ai-launcher" aria-label="AI 助手" aria-expanded="false" title="AI 助手 (Ctrl+Shift+K)">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v3M9 3h6M5 10H3v7h2m14-7h2v7h-2"/><rect x="5" y="6" width="14" height="15" rx="4"/><path d="M9 16h6"/><circle cx="9" cy="11" r="1"/><circle cx="15" cy="11" r="1"/></svg>
+    </button>
     <button id="split-broadcast" class="tb-btn" hidden>广播输入</button><div class="window-controls">
       <button id="window-minimize" aria-label="最小化" title="最小化"><svg viewBox="0 0 12 12" aria-hidden="true"><line x1="2.5" y1="6" x2="9.5" y2="6"/></svg></button>
       <button id="window-maximize" aria-label="最大化或还原" title="最大化 / 还原"><svg viewBox="0 0 12 12" aria-hidden="true"><rect x="2.5" y="2.5" width="7" height="7"/></svg></button>
@@ -94,6 +99,8 @@ app.innerHTML = `
     <div class="terminal-area" id="term-area"></div>
   </div>
 `;
+
+document.querySelector<HTMLButtonElement>('#btn-ai')!.onclick = () => ai.togglePanel();
 
 const tabsEl = document.querySelector<HTMLDivElement>("#tabs")!;
 const termArea = document.querySelector<HTMLDivElement>("#term-area")!;
@@ -150,6 +157,7 @@ const ownerOf = (sid: string | null) => workspaceTabs.find(tab => sid && leaves(
 let layoutBusy = false;
 function registerSession(session: TermSession, target?: { tab: WorkspaceTab; sid: string; direction: 'h' | 'v' }): void {
   sessions.set(session.id, session);
+  session.unlisteners.push(ai.watchSelection(session.pane, session.term, session.id));
   const historyChange = session.term.onWriteParsed(() => {
     historyCache.delete(session);
     scheduleHistorySave();
@@ -351,6 +359,7 @@ function detachSessionFrontend(id: string): void {
     }
   }
   if (activeId === id) activeId = workspaceTabs[0]?.focused ?? null;
+  ai.sessionChanged(activeId);
   rebuildLayout();
   if (activeId) activateSession(activeId);
   renderTabs();
@@ -447,6 +456,7 @@ function rememberConnection(profile: SshProfile): void {
 // ---------- 标签栏 ----------
 
 function renderTabs(): void {
+ ai.sessionChanged(activeId);
  const button = document.querySelector<HTMLButtonElement>('#split-broadcast')!;
  const currentTab = ownerOf(activeId);
  button.hidden = !currentTab || leaves(currentTab.root).length < 2;
@@ -611,6 +621,7 @@ async function destroyTab(tab: WorkspaceTab): Promise<void> {
 function activateSession(id: string): void {
   if (!sessions.has(id)) return;
   activeId = id;
+  ai.sessionChanged(id);
   const tab = ownerOf(id); if (tab) tab.focused = id;
 
   updatePanesVisibility();
@@ -658,6 +669,7 @@ async function destroySession(id: string): Promise<void> {
     else workspaceTabs.splice(workspaceTabs.indexOf(tab), 1);
   }
   if (activeId === id) activeId = (tab && workspaceTabs.includes(tab) ? tab : workspaceTabs[0])?.focused ?? null;
+  ai.sessionChanged(activeId);
   rebuildLayout();
   if (activeId) activateSession(activeId);
   renderTabs();
@@ -865,13 +877,14 @@ import {
 } from "./profiles";
 import { showImportDialog } from "./sshimport";
 import * as sftp from "./sftp";
+import * as ai from "./ai";
 
 // ---------- 下拉菜单：+ 号按钮 ----------
 
 let currentMenu: HTMLDivElement | null = null;
 let shellListPromise: Promise<ShellInfo[]> | undefined;
 let hostListPromise: Promise<ImportedHost[]> | undefined;
-export function invalidateProfileMenu(): void { hostListPromise = undefined; }
+export function invalidateProfileMenu(): void { hostListPromise = undefined; window.dispatchEvent(new Event('wterm-connections-change')); }
 let hostsReadAt = 0;
 function loadMenuData() {
   shellListPromise ??= invoke<ShellInfo[]>("list_available_shells").catch(() => { shellListPromise = undefined; return []; });
@@ -884,10 +897,16 @@ function loadMenuData() {
 
 function positionMenu(menu: HTMLElement, left: number, top: number): void {
   const width = Math.min(320, window.innerWidth - 16);
+  const visibility = menu.style.visibility;
+  menu.style.visibility = 'hidden';
   menu.style.width = `${width}px`;
   menu.style.left = `${Math.max(8, Math.min(left, window.innerWidth - width - 8))}px`;
-  menu.style.top = `${Math.max(8, Math.min(top, window.innerHeight - 100))}px`;
-  menu.style.maxHeight = `${Math.max(80, window.innerHeight - parseFloat(menu.style.top) - 8)}px`;
+  menu.style.maxHeight = `${Math.min(520, window.innerHeight - 16)}px`;
+  if (!menu.isConnected) document.body.append(menu);
+  const height = menu.getBoundingClientRect().height;
+  menu.style.top = `${Math.max(8, Math.min(top, window.innerHeight - height - 8))}px`;
+  menu.dataset.anchorX = String(left); menu.dataset.anchorY = String(top);
+  menu.style.visibility = visibility;
 }
 
 type MenuActionOptions = { icon?: string; detail?: string; disabled?: boolean; id?: string };
@@ -928,6 +947,8 @@ function appendNestedMenu(parent: HTMLElement, label: string, iconText: string, 
     event.stopPropagation();
     child.hidden = !child.hidden;
     button.classList.toggle("expanded", !child.hidden);
+    const menu = parent.closest<HTMLElement>('.menu-dropdown');
+    if (menu) positionMenu(menu, Number(menu.dataset.anchorX), Number(menu.dataset.anchorY));
   };
   wrap.append(button, child); parent.append(wrap);
   return wrap;
@@ -1185,6 +1206,8 @@ async function showCommandPalette(): Promise<void> {
     { label: "连接管理", detail: "树形分组 / 拖拽", keywords: "ssh profile connection tree", run: () => showProfilesManager() },
     { label: "管理收藏", detail: "目录 / 脚本 / 连接", keywords: "favorite bookmark", run: () => openFavoritesManager() },
     { label: "远程文件", detail: "SFTP", keywords: "sftp remote file", run: () => toggleSftpPanel() },
+    { label: "AI 助手", detail: "解释命令 / 生成命令", keywords: "ai assistant explain command", run: () => ai.togglePanel() },
+    { label: "AI 解释选中内容", detail: "Ctrl+Shift+I", keywords: "ai explain selection terminal", run: () => ai.explainSelection() },
     { label: "批量连接 / 广播", detail: "Broadcast", keywords: "batch broadcast", run: () => showBatchDialog() },
     { label: "新建窗口", detail: "Ctrl+Shift+N", keywords: "new window detach", run: () => createDetachedWindow() },
     { label: "偏好设置", detail: "Ctrl+,", keywords: "settings preferences", run: () => showSettingsDialog() },
@@ -1441,11 +1464,13 @@ async function showAddMenu(e: MouseEvent): Promise<void> {
       item.hidden = fuzzyScore(item.textContent || "", query) < 0;
     });
     menu.querySelectorAll<HTMLElement>(".menu-section-title, .menu-divider").forEach(item => { item.hidden = !!query; });
+    positionMenu(menu, rect.left, rect.bottom + 4);
   };
   filter.onkeydown = (event) => {
     if (event.key === "Escape") { closeCurrentMenu(); if (activeId) sessions.get(activeId)?.term.focus(); }
     if (event.key === "Enter") menu.querySelector<HTMLElement>(".menu-item:not([hidden])")?.click();
   };
+  positionMenu(menu, rect.left, rect.bottom + 4);
   document.body.appendChild(menu);
   currentMenu = menu;
   filter.focus();
@@ -1595,14 +1620,22 @@ async function showAppMenu(event: MouseEvent): Promise<void> {
 document.querySelector("#btn-app-menu")!.addEventListener("click", event => void showAppMenu(event as MouseEvent));
 
 termArea.addEventListener("contextmenu", event => {
-  if (!event.shiftKey) return;
   const session = [...sessions.values()].find(candidate => candidate.pane.contains(event.target as Node));
   if (!session) return;
+  const selected = session.term.getSelection();
+  if (!event.shiftKey && (!aiReady() || !selected.trim())) return;
   event.preventDefault();
   event.stopPropagation();
   activateSession(session.id);
   closeCurrentMenu();
   const menu = document.createElement("div"); menu.className = "menu-dropdown terminal-context-menu";
+  if (aiReady() && selected.trim()) {
+    for (const item of ai.AI_SELECTION_ACTIONS) {
+      const action = appendMenuAction(menu, 'AI ' + item.label, () => ai.prepareSelection(selected, item.action, session.id), { icon: '✦' });
+      action.querySelector('.icon')!.setAttribute('aria-hidden', 'true');
+    }
+    appendDivider(menu);
+  }
   appendMenuAction(menu, "粘贴", async () => {
     const text = await navigator.clipboard.readText().catch(() => "");
     if (text) session.term.paste(text);
@@ -1622,11 +1655,15 @@ termArea.addEventListener("contextmenu", event => {
 });
 window.addEventListener('keydown', e => {
   if (e.key === 'Escape' && currentMenu) { e.preventDefault(); closeCurrentMenu(); return; }
+  const action = shortcutAction(e);
+  // The assistant toggle remains available while composing or searching a chat.
+  if (action === 'aiPanel' && e.target instanceof HTMLElement && e.target.closest('.ai-panel') && !document.querySelector('.dialog-mask')) {
+    e.preventDefault(); ai.togglePanel(); return;
+  }
   if (document.querySelector('.dialog-mask') || (e.target instanceof HTMLElement && e.target.matches('input, select, textarea:not(.xterm-helper-textarea)'))) {
     if (e.ctrlKey && e.shiftKey) report(`快捷键被跳过: 存在打开的对话框或焦点在输入框（target=${e.target instanceof HTMLElement ? e.target.className || e.target.tagName : String(e.target)}）`);
     return;
   }
-  const action = shortcutAction(e);
   if (!action) {
     if (e.ctrlKey && e.shiftKey) report(`快捷键未匹配: ${keyChord(e)}（key=${e.key}），未绑定任何动作`);
     return;
@@ -1668,6 +1705,8 @@ window.addEventListener('keydown', e => {
     case "openDirectory": void openCurrentDirectory(); break;
     case "fontLarger": adjustFontSize(1); break;
     case "fontSmaller": adjustFontSize(-1); break;
+    case "aiExplain": ai.explainSelection(); break;
+    case "aiPanel": ai.togglePanel(); break;
     case "newWindow": void createDetachedWindow(); break;
     case "reconnect": {
       const session = activeId ? sessions.get(activeId) : undefined;
@@ -1684,13 +1723,22 @@ window.addEventListener("resize", () => {
 window.addEventListener("beforeunload", saveWorkspace);
 window.addEventListener('pagehide', saveWorkspace);
 document.addEventListener('visibilitychange', () => { if (document.hidden) saveWorkspace(); });
-void getCurrentWindow().onCloseRequested(async () => {
-  // Drain queued xterm output before Tauri destroys the WebView.
-  await Promise.all([...sessions.values()].map(session => new Promise<void>(resolve => {
-    const timeout = window.setTimeout(resolve, 500);
-    session.term.write('', () => { window.clearTimeout(timeout); resolve(); });
-  })));
-  saveWorkspace();
+void getCurrentWindow().onCloseRequested(async event => {
+  event.preventDefault();
+  try {
+    // Drain queued output and commit AI transcripts before destroying the WebView.
+    await Promise.all([...sessions.values()].map(session => new Promise<void>(resolve => {
+      const timeout = window.setTimeout(resolve, 500);
+      session.term.write('', () => { window.clearTimeout(timeout); resolve(); });
+    })));
+    saveWorkspace();
+    await ai.flushHistory();
+  } catch (error) {
+    report(`关闭前保存失败: ${String(error)}`);
+    if (confirm(`AI 历史保存失败：${String(error)}。仍然关闭会丢失未保存的内容，是否关闭？`)) await getCurrentWindow().destroy();
+    return;
+  }
+  await getCurrentWindow().destroy();
 }).catch(error => report(`注册历史保存失败: ${String(error)}`));
 
 // ---------- 启动 ----------
@@ -1702,6 +1750,28 @@ void getCurrentWindow().onCloseRequested(async () => {
       return session?.profile && session.status === "connected"
         ? { sid: session.id, cwd: session.cwd }
         : null;
+    });
+    ai.initPanel(document.querySelector<HTMLElement>(".main")!, {
+      getSessionId: () => activeId,
+      getConnection: () => {
+        const session = activeId ? sessions.get(activeId) : undefined;
+        return ai.connectionForProfile(session?.profile, !!session);
+      },
+      getKnownConnections: async () => (await invoke<SshProfile[]>('list_ssh_profiles')).map(profile => ai.connectionForProfile(profile)),
+      canInsert: () => {
+        const session = activeId ? sessions.get(activeId) : undefined;
+        return session?.status === 'connected' && !session.zmodem?.isActive();
+      },
+      getSelection: () => (activeId ? sessions.get(activeId)?.term.getSelection() ?? "" : ""),
+      activateSession: sid => { if (!sessions.has(sid)) return false; activateSession(sid); return true; },
+      focusTerminal: () => { if (activeId) sessions.get(activeId)?.term.focus(); },
+      insertIntoTerminal: async text => {
+        const session = activeId ? sessions.get(activeId) : undefined;
+        if (!session || !session.pasteInput || session.status !== 'connected' || session.zmodem?.isActive()) throw new Error('请先选择一个可输入的终端会话');
+        if (!ai.canInsertCommand(text)) throw new Error('多行或含控制字符的命令请复制后自行检查');
+        await session.pasteInput(text);
+      },
+      openSettings: () => void showSettingsDialog(),
     });
     await applyAppearance();
     const transferToken = new URLSearchParams(window.location.search).get("transfer");

@@ -1,199 +1,212 @@
-# wterm
+<div align="center">
+  <img src="src-tauri/icons/icon.png" width="80" alt="wterm logo" />
+  <h1>wterm</h1>
+  <p><strong>A desktop workspace for local terminals, SSH, and SFTP.</strong></p>
+  <p>
+    <a href="https://github.com/wushuang3625/wterm/releases"><img src="https://img.shields.io/github/v/release/wushuang3625/wterm?style=flat-square" alt="GitHub release" /></a>
+    <img src="https://img.shields.io/badge/Tauri-2-24C8D8?style=flat-square" alt="Tauri 2" />
+    <img src="https://img.shields.io/badge/TypeScript-3178C6?style=flat-square&amp;logo=typescript&amp;logoColor=white" alt="TypeScript" />
+    <img src="https://img.shields.io/badge/Rust-000000?style=flat-square&amp;logo=rust&amp;logoColor=white" alt="Rust" />
+  </p>
+  <p>
+    <a href="README.zh-CN.md">简体中文</a> · <a href="README.md">English</a> ·
+    <a href="https://github.com/wushuang3625/wterm/releases">Download</a> ·
+    <a href="https://github.com/wushuang3625/wterm/issues">Issues</a>
+  </p>
+</div>
 
-开源、轻量、设计驱动的 SSH 工作台 —— **Warp 的颜值 + Tabby 的功能 + 零订阅**。
+---
 
-## 当前状态：v0.1.5
+wterm brings local shells, SSH connection management, SFTP transfers, and an optional AI assistant into one desktop application for development, server administration, and troubleshooting. It uses **Tauri 2, TypeScript, and xterm.js**, with a Rust backend for terminals and networking.
 
-桌面应用使用 **Tauri 2 + TypeScript + xterm.js**，Rust 后端负责本地终端、SSH 和 SFTP。
+## Contents
 
-- ✅ 本地 Shell 终端（PowerShell / cmd 等自动探测）+ 多标签 + 递归分屏
-- ✅ xterm.js 终端、终端搜索（Ctrl+F）、连续滚动与顶部／底部导航、主题系统（深/浅 + 14 套内置，含护眼主题）、字号快捷缩放（Ctrl+= / Ctrl+-）
-- ✅ SSH 连接管理（Profile 持久化、分组/标签、树形整理、Ctrl+P 快速连接）
-- ✅ 认证：密码 / 私钥 / 系统 ssh-agent（Windows named pipe、Unix SSH_AUTH_SOCK）/ MFA（多轮 OTP）
-- ✅ 凭据可选写入系统 Keychain（`keyring`）
-- ✅ ProxyJump 跳板链（最多 8 跳）、自动重连（可配退避）、keepalive、登录脚本
-- ✅ SFTP 侧栏文件浏览器、传输队列（进度/暂停/重试）、chmod、目录联动、远程编辑
-- ✅ 命令面板（Ctrl+K）、自定义快捷键、收藏、批量开主机、分屏广播输入
-- ✅ 窗口布局启动恢复、系统通知（命令完成/断开/关键词）、毛玻璃/背景图/透明度
-- ✅ Windows 11 资源管理器第一层菜单「在 wterm 中打开」（文件夹／空白处；需包身份注册，见 [安装说明](docs/windows-explorer.md)）
-- 🟨 部分完成与 ❌ 未完成项见 [功能清单 · 实现核验](docs/feature-list.md)（唯一权威状态）
+[Features](#features) · [Installation](#installation) · [Quick start](#quick-start) · [AI assistant](#ai-assistant) · [Keyboard shortcuts](#keyboard-shortcuts) · [Configuration and data](#configuration-and-data) · [Development](#development) · [Known limitations](#known-limitations) · [Contributing](#contributing) · [License](#license)
 
-本次更新与安装说明见 [0.1.5 发布说明](docs/releases-0.1.5.md)。已知边界见 README「当前边界」与 [0.1.4 验收说明](docs/fixes-0.1.4.md)。
+## Features
 
-## 技术栈
+| Feature | Details |
+| --- | --- |
+| Local terminals | Shell detection, including PowerShell and cmd; tabs, drag reordering, recursive splits, and broadcast input. |
+| SSH workspace | Saved connections, groups, tags, quick connect, batch connections, keepalive, login scripts, and configurable reconnection. |
+| SSH authentication | Passwords, private keys, system ssh-agent, multi-round MFA, fingerprint confirmation, and `known_hosts` checks. |
+| Jump hosts | ProxyJump chains of up to 8 hops, with independent authentication and host-key confirmation. |
+| SFTP file management | Browse, upload, download, edit remote files and upload changes, rename, delete, create directories, and change Unix permissions. |
+| Transfer queue | Progress and speed, pause, continue, cancel, and retry from the beginning; open completed downloads. |
+| Terminal reading | Regex search, log coloring rules, font zoom, command history, sixel, and iTerm2 image previews. |
+| Appearance and recovery | Light/dark themes, backgrounds, transparency, platform-specific window effects, notifications, and restoration of tabs, splits, and recent text output. |
+| AI assistant (source) | Bring your own API key (BYOK); explain and generate commands, summarize output, optionally diagnose failures, and keep local conversations in a docked panel with collapsible thinking content. |
+| Windows integration | “Open in wterm” in the Windows 11 Explorer context menu; opens a new window in the selected directory and requires package identity registration. |
 
-| 层 | 选型 |
-|---|---|
-| 桌面窗口与界面 | Tauri 2 + TypeScript + HTML/CSS |
-| 终端 | xterm.js + WebGL、图片扩展、zmodem.js |
-| 后端 | Rust：`portable-pty`（本地 PTY）、`russh`（SSH）、`keyring`（凭据）、`window-vibrancy`（窗口效果） |
+> **Version note:** Source version `0.1.6` includes the AI assistant, local conversation history, terminal insertion fixes, and collapsible thinking content. See the [0.1.6 notes](docs/releases-0.1.6.md) for changes and local validation. Published packages are listed on [GitHub Releases](https://github.com/wushuang3625/wterm/releases); implementation status and plans are tracked in the [feature checklist](docs/feature-list.md).
 
-## 目录结构
+## Installation
 
-```
-wterm/
-├── index.html              # WebView 入口（含主题变量）
-├── src/                    # 前端 TypeScript
-│   ├── main.ts             # 应用主体：标签、会话生命周期、布局恢复、快捷键分发
-│   ├── terminal.ts         # xterm.js 封装 + 后端 IO 桥接 + 链接识别
-│   ├── profiles.ts         # SSH 配置 / 设置 / 连接管理 UI
-│   ├── sftp.ts             # SFTP 面板
-│   ├── transfer-queue.ts   # 传输队列
-│   ├── shortcuts.ts        # 快捷键动作表与预设
-│   ├── themes.ts           # 内置主题
-│   ├── notifications.ts    # 系统通知
-│   ├── credentials.ts      # Keychain 前端封装
-│   ├── sshimport.ts        # ~/.ssh/config 导入
-│   ├── knownhosts.ts       # known_hosts 管理
-│   ├── appearance.ts       # 背景 / 透明度 / 窗口效果
-│   └── styles.css          # 视觉体系
-├── src-tauri/src/          # Rust 后端
-│   ├── lib.rs              # 与界面无关的核心模块
-│   ├── events.rs           # 进程内事件和数据通道
-│   ├── webview.rs          # Tauri 命令注册和应用入口
-│   ├── pty.rs              # 本地伪终端 + 输出转发
-│   ├── ssh.rs              # russh 连接 + 通道 actor
-│   ├── ssh_route.rs        # ProxyJump 路由解析
-│   ├── ssh_auth.rs         # 认证策略（含 MFA / partial-success）
-│   ├── ssh_agent.rs        # 系统 ssh-agent
-│   ├── sshconfig.rs        # SSH config 解析
-│   ├── sftp.rs             # SFTP 后端
-│   ├── transfers.rs        # 传输引擎
-│   ├── known_hosts.rs      # known_hosts 读写
-│   ├── credentials.rs      # 系统 Keychain
-│   ├── windowing.rs        # 窗口 / 外部打开 / vibrancy
-│   ├── session.rs          # 会话抽象（本地 / SSH 统一接口）
-│   ├── profiles.rs         # SSH 配置 JSON 持久化
-│   └── state.rs            # 全局会话表
-├── src-tauri/capabilities/default.json   # 权限（事件监听必需！）
-├── src-tauri/tauri.conf.json
-└── docs/
-    ├── feature-list.md     # 功能清单与实现核验（权威状态）
-    ├── remote-directory-sync.md # 远端 Shell 目录联动配置
-    ├── fixes-0.1.4.md      # 0.1.4 实现与验收说明
-    ├── fixes-0.1.3.md      # 0.1.3 实现与验收说明
-    ├── fixes-0.1.2.md      # 0.1.2 历史记录
-    └── fixes-search-mfa-zmodem.md  # 0.1.1 历史记录
-```
+Visit [GitHub Releases](https://github.com/wushuang3625/wterm/releases) and choose a package for your system.
 
-## 运行
+| Platform | Status |
+| --- | --- |
+| Windows x64 | NSIS (`.exe`) is recommended. See the corresponding Release for available packages; the local `0.1.6` build provides an NSIS installer. |
+| Windows ARM64 | Explorer build scripts support ARM64; consult the Release for available packages and validation status. |
+| macOS / Linux | Platform adaptations exist in source; consult the Release for packages and target-platform validation. |
 
-### 桌面开发
+Windows requires Microsoft Edge WebView2 Runtime. The local installers and Explorer identity package are unsigned. The Windows 11 top-level context menu requires a trusted identity package or an environment with Developer Mode already enabled. NSIS attempts registration automatically; MSI requires manual registration. Registration failure does not prevent the application from being installed. See the [release notes](docs/releases-0.1.6.md) and [Explorer guide](docs/windows-explorer.md).
+
+## Quick start
+
+1. Launch wterm and press `Ctrl+Shift+T` to open a local terminal.
+2. Add an SSH connection with its host, port, username, and authentication method. Press `Ctrl+P` to find and connect to it.
+3. Verify the host fingerprint on first connection. For system ssh-agent authentication, start your agent and load keys with `ssh-add` first.
+4. Press `Ctrl+Shift+R` in an SSH session to browse, upload, download, or edit remote files.
+5. Press `Ctrl+,` to configure themes, fonts, shortcuts, notifications, and terminal behavior.
+
+**Jump hosts:** Enter saved connection names, SSH config aliases, or `user@host:port` in the jump-host chain. Separate multiple hops with commas; use `user@[::1]:22` for IPv6.
+
+**Directory following:** Enable the SFTP option to follow the terminal directory. The remote shell must report paths using OSC 7 or OSC 9;9. Bash, Zsh, and Fish snippets are available in the panel and the [directory-sync guide](docs/remote-directory-sync.md).
+
+**Command history and images:** Choose disabled, shell markers (OSC 133), or input inference in settings. Use the terminal’s command-block button to switch to history. Complex line editing and interactive programs can affect inferred boundaries. iTerm2 images open in a separate preview; sixel renders in the terminal grid. Neither requires command blocks.
+
+**Session recovery:** Restarting restores tabs, splits, and recent text before creating new shell / SSH sessions. Restored history is for viewing; it does not replay commands or restore processes. Alternate screens, images, and manually closed tabs are not restored.
+
+## AI assistant
+
+This section describes the current source. Check the corresponding Release for availability in installers.
+
+Open the AI assistant settings, choose a provider or custom endpoint and protocol, save your API key, and fetch and select models or enter model IDs manually. Presets include OpenAI, Anthropic, DeepSeek, Moonshot, Qwen, and local Ollama. Ollama does not require an API key.
+
+- **Panel and layout:** Press `Ctrl+Shift+K` or click the robot button to open or collapse the panel. It docks on the right by default, supports the left side or above the terminal, and can be resized. Collapsing it keeps requests running.
+- **Explain and summarize:** Select terminal text and use the AI button beside the mouse or the context menu to explain commands, troubleshoot, or add the selection to the draft. `Ctrl+Shift+I` prepares an explanation request.
+- **Generate commands:** Describe the task and review the response. Eligible single-line commands can be inserted into the terminal for the matching connection without a trailing Enter. Multiline code or code containing control characters is copy-only.
+- **Conversation history:** Conversations are saved locally. Browse all conversations or group by connection; click to preview and continue editing, double-click or press Enter to activate, and use the context menu to rename, pin, or delete. Multiple conversations can generate replies simultaneously and show progress in the sidebar.
+- **Thinking content:** When the provider returns thinking text or a summary, a section above the answer stays collapsed by default. Expand it to follow updates. The content is saved with the conversation and excluded from subsequent model prompts.
+- **Failure diagnosis:** Off by default. When enabled, it analyzes explicitly reported nonzero exits in the active session, including up to the last 6000 characters of that command’s output. Local PowerShell reports exit codes; remote shells need exit markers. The current cmd integration does not report exit codes.
+- **Request control:** Streaming responses, activity status, independent cancellation, and retries are supported. Switching terminal tabs keeps requests running. There is no tool executor; users review and execute suggestions themselves.
+
+The Rust backend connects directly to the configured endpoint. API keys are stored in the system credential store separately for each endpoint and protocol. Requests may contain your input, explicitly attached terminal excerpts, and limited conversation history. Automatic diagnosis also sends the failed command, exit code, and limited output, with best-effort credential redaction. Redaction cannot cover every sensitive value. Local AI transcripts are stored without encryption and may contain terminal excerpts. Providers may charge for API usage. See the [AI implementation notes](docs/ai-review.md) for validation scope.
+
+## Keyboard shortcuts
+
+Default bindings can be changed in settings, with wterm, VS Code, and iTerm2 presets available.
+
+| Shortcut | Action |
+| --- | --- |
+| `Ctrl+Shift+T` | New local tab |
+| `Ctrl+Shift+W` | Close the current pane |
+| `Ctrl+Tab` / `Ctrl+Shift+Tab` | Next / previous tab |
+| `Ctrl+Shift+D` / `Ctrl+Shift+E` | Side-by-side / stacked split |
+| `Ctrl+P` | Quick connect |
+| `Ctrl+K` | Command palette |
+| `Ctrl+F` | Search terminal |
+| `Ctrl+Shift+R` | Remote files |
+| `Ctrl+=` / `Ctrl+-` | Increase / decrease font size (`Ctrl++` also increases it) |
+| `Ctrl+,` | Preferences |
+| `Ctrl+Shift+I` | Explain the selection with AI |
+| `Ctrl+Shift+K` | Open AI assistant |
+
+See [`src/shortcuts.ts`](src/shortcuts.ts) for the full action list.
+
+## Configuration and data
+
+The default Windows configuration directory is `%APPDATA%\wterm\`. On macOS / Linux, wterm uses the system configuration directory with a `wterm/` subdirectory.
+
+| File or storage | Purpose |
+| --- | --- |
+| `settings.json` | Appearance, terminal behavior, notifications, shortcuts, favorites, and AI preferences. |
+| `settings-location.json` | Location of a custom settings file. |
+| `profiles.json` | SSH connections, groups, tags, and authentication configuration; excludes saved passwords and key passphrases. |
+| `ai-history.sqlite3` | Local AI conversations, drafts, and attached context in the current source. |
+| System credential store | SSH passwords, key passphrases, and AI API keys. |
+| WebView local storage | Window layouts, recent terminal text, and other runtime state. |
+
+Change the absolute path of `settings.json` in the configuration-file section of general settings. Switching writes current preferences and preserves the old file; it does not move SSH profiles or AI history. Restart after manual settings edits. Legacy preferences are migrated on first launch.
+
+Review host addresses, login scripts, and conversation content before sharing files. Secrets in the system credential store do not migrate with configuration files.
+
+## Development
+
+### Prerequisites
+
+- Git, Node.js 22 or later, and npm.
+- Rust 1.89 or later and Cargo.
+- Windows: MSVC toolchain, Visual Studio C++ Build Tools, WebView2, and a Windows SDK containing `MakeAppx.exe`. Desktop development startup also builds the Explorer extension.
+- macOS / Linux: install the appropriate system dependencies from the [Tauri prerequisites guide](https://v2.tauri.app/start/prerequisites/).
+
+### Run the desktop app
 
 ```bash
-npm install
-npm run tauri dev
+git clone https://github.com/wushuang3625/wterm.git
+cd wterm
+npm ci
+npm run tauri -- dev
 ```
 
-`npm run tauri dev` 同时启动 Vite 开发服务器和桌面应用。`npm run dev` 仅启动前端开发服务器。
+This starts Vite and the desktop app. `npm run dev:web` starts only the frontend server. Full terminal, SSH, SFTP, and AI functionality requires the Tauri backend.
 
-> ⚠️ **注意**：debug 构建的二进制默认加载 `devUrl`（`http://localhost:1420`）。
-> 因此**不要**直接双击运行 `src-tauri/target/debug/wterm.exe`——必须先启动 Vite（`npm run dev`），
-> 否则窗口白屏。生产构建（`tauri build`）会内嵌前端资源，无此限制。
-
-### 构建安装包
+### Build installers
 
 ```bash
+npm run tauri -- build
+```
+
+Tauri runs the frontend build and preparation scripts automatically. Default packages are written to `src-tauri/target/release/bundle/`. To build only NSIS on Windows:
+
+```bash
+npm run tauri -- build --bundles nsis
+```
+
+See the [Explorer guide](docs/windows-explorer.md) for identity-package signing and registration.
+
+### Checks and tests
+
+Run from the repository root:
+
+```bash
+npm run typecheck
+npm test
 npm run build:web
-npm run tauri build
+cargo test --manifest-path src-tauri/Cargo.toml
+npm run test:ui
 ```
 
-## 快捷键（常用）
+The current UI test configuration uses Microsoft Edge (`msedge`) and starts Vite automatically. Browser tests mock desktop interfaces; some SSH and AI tests use local protocol servers. These do not replace validation against real servers, providers, or target operating systems.
 
-| 快捷键 | 功能 |
-|---|---|
-| `Ctrl+Shift+T` | 新建本地终端 |
-| `Ctrl+Shift+W` | 关闭当前会话 |
-| `Ctrl+Tab` | 切换到下一个会话 |
-| `Ctrl+P` | 快速连接（模糊搜索） |
-| `Ctrl+K` | 命令面板 |
-| `Ctrl+F` | 终端内搜索 |
-| `Ctrl+=` / `Ctrl++` | 放大终端字体 |
-| `Ctrl+-` | 缩小终端字体 |
+### Repository structure
 
-全部可在设置中重映射，含 wterm / VS Code / iTerm2 预设（见 `src/shortcuts.ts`）。
-
-## 命令块与图片
-
-在「设置 → 常规设置 → 命令块」选择关闭、Shell 标记或输入推断。启用后，终端仍以完整大小显示输出。点击终端右下角的「命令块」按钮，可在同一窗格切换到命令历史视图，折叠、复制或重新运行；关闭视图后继续使用终端。Shell 标记模式依赖 OSC 133；本地 PowerShell 和 cmd 会自动发送标记。没有标记的远程 Shell 可使用输入推断，但复杂行编辑和交互程序中的命令边界可能不准确。
-
-iTerm2 inline image 输出会打开独立的图片预览，默认适应窗格，可切换原始大小并滚动查看；关闭后可从终端左下角再次打开。sixel 仍在终端网格内显示。图片预览无需开启命令块。
-
-## 配置文件
-
-Windows 下的用户配置目录为 `%APPDATA%\wterm\`：
-
-- `settings.json`：主题、字体、终端行为、通知、快捷键、收藏等偏好设置。
-- `profiles.json`：SSH 连接配置与分组。
-
-macOS / Linux 使用系统配置目录下的 `wterm/`。可以在「设置 → 常规设置 → 配置文件」更改 `settings.json` 的绝对路径；应用会先把当前设置写到新文件，再通过默认配置目录中的 `settings-location.json` 记住新路径。恢复默认路径时会把当前设置写回默认 `settings.json`。旧文件保留，避免丢失数据；为避免覆盖，目标位置若已有其他文件，请选择新文件名。SSH Profile 仍使用上述 `profiles.json`。
-
-首次启动会把旧版 WebView localStorage 中的偏好设置迁入 JSON 文件。可以把配置文件纳入版本管理；手工修改后重启应用生效。`settings.json` 的 `version` 当前为 `1`，`settings` 中的值均为字符串，例如 `"wterm_font_size": "16"`。密码和私钥短语保存在系统 Keychain，不写入配置文件；窗口会话快照、最近连接等运行状态仍保留在本机。
-
-## 排查问题
-
-关闭窗口后再次启动，会恢复标签、分屏及最近的终端文字输出，并重新建立本地 Shell / SSH 连接。历史与新连接之间会显示分隔提示；历史仅用于查看，不会重新执行旧命令，也不会恢复原进程。输出约每 2 秒保存一次，正常关闭窗口前会再保存。
-
-历史保存在本机的窗口工作区数据中，不写入 `settings.json`。每个终端最多保留最近 10000 回滚行，另受每终端 128000 字符和窗口合计 1000000 字符限制，超限从较旧行开始缩减。vim/top 等备用屏幕及图片不恢复；手动关闭的标签不在下次启动恢复。
-
-debug 构建下，前端 JS 异常与后端 PTY 错误会写入：
-
-```
-%TEMP%\wterm-debug.log
+```text
+wterm/
+├── src/                    # TypeScript UI, terminals, SSH/SFTP, and AI interaction
+├── src-tauri/
+│   ├── src/                # Rust PTY, SSH, SFTP, credentials, AI, and history storage
+│   ├── shell-extension/    # Native Windows Explorer extension
+│   ├── windows/            # Identity package, registration, and installer hooks
+│   └── tauri.conf.json     # Application and build configuration
+├── scripts/                # Desktop build and Explorer packaging scripts
+├── tests/                  # Unit tests and Playwright UI tests
+├── docs/                   # Feature status, guides, and release notes
+└── package.json            # npm dependencies and scripts
 ```
 
-白屏类问题可优先查看此文件。
+### Troubleshooting
 
-### 快捷键无反应时自检
+- **Blank development window:** Debug builds load `http://localhost:1420`. Start with `npm run tauri -- dev`, or start Vite before launching the debug executable directly. Production builds embed frontend assets.
+- **Shortcuts do not respond:** Check the current preset, input focus, and system input-method shortcuts. Windows debug logs are normally written to `%TEMP%\wterm-debug.log`.
+- **SFTP does not follow the directory:** Ensure the remote shell reports path markers. Test outside tmux / screen first; see the [directory-sync guide](docs/remote-directory-sync.md).
+- **Native Windows ssh reports `getsockname`:** If ControlMaster is enabled, try `ssh -o ControlMaster=no -o ControlPath=none -o ControlPersist=no <host>`. wterm’s built-in SSH channel reuse does not depend on these options.
 
-仅 debug 构建（`npx tauri dev`）会记录。快捷键按下后会写入日志，按下无反应的组合键（如 Ctrl+Shift+E）后查看本文件即可定位原因：
+## Known limitations
 
-- 日志无任何记录：按键被系统或输入法截走（Windows 下 Ctrl+Shift 可能被用作切换输入法热键，可切换输入法为英文键盘后再试，或在「设置 → 快捷键」改绑到 Ctrl+Alt 组合）。
-- `快捷键被跳过`：有对话框未关闭，或焦点在输入框内。
-- `快捷键未匹配`：该组合键当前未绑定动作——多为在设置里应用过 VS Code / iTerm2 预设（如预设中上下拆分是 Ctrl+Shift+\\），点「恢复默认」或重新绑定即可。
-- `快捷键命中 ... -> splitV` 但界面无变化：属会话状态问题，请附带日志反馈。
+- SSH config does not expand `Include`, `Match`, or wildcard `Host` defaults, and does not execute `ProxyCommand`. PuTTY import is not implemented.
+- ssh-agent does not support certificate identities, Pageant, or agent forwarding. Port forwarding and Mosh are not implemented.
+- SFTP does not support recursive directory transfers, archive operations, dragging files out to the system file manager, or resuming across disconnects / restarts. Pausing continues only within the current connection. Retrying starts over; partial destination files may remain.
+- WebDAV / Gist sync, theme imports, Workspace combinations, and session migration between windows are not implemented.
+- AI has no tool executor; real-provider validation and formal release remain pending. JumpServer, system agents, different SFTP servers, and Explorer integration need target-environment validation.
 
-## ProxyJump、ssh-agent 与 SFTP
+## Contributing
 
-- 新建 SSH 连接的“跳板链”可填写已保存连接名、SSH config 别名，或 user@host:port；多跳用逗号分隔，IPv6 写为 user@[::1]:22。每一跳独立确认指纹及认证，最多 8 跳。
-- 已保存跳板沿用其密码、私钥或 agent 配置；直接地址默认使用系统 agent。导入 SSH config 时保留 ProxyJump。
-- “系统 ssh-agent”会请求本机 agent 签名。Windows 使用 OpenSSH named pipe（或 SSH_AUTH_SOCK 指定的 named pipe）；Unix 使用 SSH_AUTH_SOCK。请先启动 agent 并用 ssh-add 添加密钥。
-- SFTP 支持传输队列、进度/速度、暂停/继续、取消、从头重试、覆盖确认和下载另存为。队列每次并发最多 2 项，同会话同一上传目标串行执行。
-- 支持 Unix 权限修改。SFTP「跟随终端目录」支持远端 Shell 通过 OSC 7 或 OSC 9;9 上报路径；面板内提供 Bash、Zsh、Fish 配置片段和复制按钮。详细说明见 [远端目录联动配置](docs/remote-directory-sync.md)。
-- 详见 [0.1.3 实现与验收说明](docs/fixes-0.1.3.md)。
+Report bugs and suggest features through [Issues](https://github.com/wushuang3625/wterm/issues), or submit improvements through a Pull Request.
 
-## 当前边界
+Include the application version, operating system, reproduction steps, expected and actual behavior, and sanitized logs in bug reports. Run checks relevant to your changes, describe the results, and update documentation when behavior changes.
 
-- agent 暂不支持证书身份、Pageant 或转发到远程。
-- SSH config 仍不展开 Include / Match / 通配符默认项；ProxyCommand 不执行。
-- SFTP 暂停可继续当前连接内的传输；失败、取消或程序重启后没有持久化断点续传，重试从头开始，目标可能保留部分文件。
-- 递归目录传输、拖出文件至系统文件管理器、压缩解压仍未实现。
-- 真实 JumpServer、系统 agent 服务及不同 SFTP 服务端仍需实机验收；自动化测试使用独立本机协议服务器。
-- 字号快捷键缩放按按键产生的字符（`=` / `+` / `-`）匹配，个别键盘布局下按键位置不同时可在「设置 → 快捷键」重映射。
+## License
 
-## 下一步
-
-见 `docs/feature-list.md` 的「版本切分建议」（已按 2026-09-22 实现核验刷新），当前未完成项主要包括：
-
-- **配置**：WebDAV/Gist 同步
-- **SSH**：端口转发、Mosh、PuTTY/Tabby 导入、SSH config Include/Match、agent 证书/转发
-- **SFTP**：断点续传、压缩解压、拖出下载、递归目录传输
-- **界面**：Workspace、主题配色导入、多窗口会话迁移
-- **其他**：串口/Telnet、AI（BYOK）
-
-## 连接菜单与终端设置
-
-- 快速连接菜单按最近 3 个成功连接、收藏、新建自定义连接、本地终端、已保存连接排列。
-- 双击标题栏空白处最大化或还原；分屏不再显示重复工具条，悬停窗格右上角可拖动交换位置。
-- 设置内可更改快捷键和终端字体，保存后立即生效；也可随时用 Ctrl+= / Ctrl++ 放大、Ctrl+- 缩小字号（8–40px）。
-- 分屏后点击标题栏“广播输入”向当前标签的已连接窗格广播，再点击“停止广播”关闭。
-
-### Windows ssh 的 getsockname 报错
-
-原生 Windows OpenSSH 不支持 ControlMaster 连接复用。如果 ssh -G 主机别名显示 controlmaster auto 和 controlpath，可用以下命令关闭复用验证：
-
-```powershell
-ssh -o ControlMaster=no -o ControlPath=none -o ControlPersist=no jumpserver
-```
-
-长期使用时，在 Windows SSH 配置对应 Host 段、通配符默认段之前设置 ControlMaster no、ControlPath none、ControlPersist no。wterm 内置 SSH 的通道复用不依赖这些选项。
+The repository does not currently include a standalone `LICENSE` file. MIT / Apache-2.0 appear as candidates in the feature plan, not as an adopted project license. The maintainer still needs to specify the licensing terms.

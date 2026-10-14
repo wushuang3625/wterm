@@ -1,8 +1,8 @@
 # wterm 0.1.1：JumpServer / rz 第二轮修复
 
-## 对比截图与定位
+## 问题定位
 
-Tabby 已通过私钥认证并显示 OTP，旧 wterm 在 OTP 之前失败。旧依赖 russh 0.45 的客户端认证状态存在两个关键限制：
+旧 wterm 在私钥认证后、OTP 挑战出现之前失败。旧依赖 russh 0.45 的客户端认证状态存在两个关键限制：
 
 - 切换认证方式时没有同步 keyboard-interactive 的挑战解析状态（client/encrypted.rs 的 write_auth_request_if_needed）。
 - USERAUTH_FAILURE 中的 partial-success 位没有传递给调用方。

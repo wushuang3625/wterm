@@ -7,6 +7,8 @@ use std::sync::Mutex;
 pub enum SshCommand {
     /// 用户输入
     Write(Vec<u8>),
+    /// Explicit insertion, acknowledged after the channel accepts its bytes.
+    Insert(Vec<u8>, tokio::sync::oneshot::Sender<Result<(), String>>),
     /// 调整终端尺寸
     Resize(u16, u16),
     /// 关闭通道
@@ -33,7 +35,9 @@ pub enum SessionKind {
 impl SessionKind {
     /// 取出 SSH 连接句柄（本地会话返回 None）。
     /// `Handle::channel_open_session` 接受 `&self`，因此可安全共享以并发开通道。
-    pub fn ssh_handle(&self) -> Option<std::sync::Arc<russh::client::Handle<crate::ssh::SshHandler>>> {
+    pub fn ssh_handle(
+        &self,
+    ) -> Option<std::sync::Arc<russh::client::Handle<crate::ssh::SshHandler>>> {
         match self {
             SessionKind::Ssh { handle, .. } => Some(handle.clone()),
             SessionKind::Local { .. } => None,
@@ -42,6 +46,25 @@ impl SessionKind {
 }
 
 impl SessionKind {
+    pub fn insert(
+        &self,
+        data: &[u8],
+    ) -> anyhow::Result<Option<tokio::sync::oneshot::Receiver<Result<(), String>>>> {
+        match self {
+            Self::Local { .. } => {
+                self.write(data)?;
+                Ok(None)
+            }
+            Self::Ssh { cmd_tx, .. } => {
+                let (reply, receiver) = tokio::sync::oneshot::channel();
+                cmd_tx
+                    .send(SshCommand::Insert(data.to_vec(), reply))
+                    .map_err(|_| anyhow::anyhow!("SSH 通道已结束，请重新连接"))?;
+                Ok(Some(receiver))
+            }
+        }
+    }
+
     /// 向会话写入用户输入
     pub fn write(&self, data: &[u8]) -> anyhow::Result<()> {
         match self {

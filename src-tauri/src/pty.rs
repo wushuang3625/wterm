@@ -8,6 +8,10 @@ use std::io::Read;
 use crate::session::SessionKind;
 use crate::state::AppState;
 
+// Read $? before any prompt work changes it. Cmdlet failures get status 1;
+// native programs retain their nonzero LASTEXITCODE. A later success resets to 0.
+const POWERSHELL_PROMPT_HOOK: &str = "$global:WtermOriginalPrompt = $function:prompt; $global:WtermPromptSeen = $false; $global:WtermLastError = $null; function global:prompt { $ok = $?; $lastError = if ($Error.Count) { $Error[0] } else { $null }; $newError = -not [object]::ReferenceEquals($lastError, $global:WtermLastError); $code = if ($ok) { 0 } elseif ($newError -and $lastError.FullyQualifiedErrorId -notlike '*NativeCommandExit*') { 1 } elseif ($global:LASTEXITCODE -is [int] -and $global:LASTEXITCODE -ne 0) { $global:LASTEXITCODE } else { 1 }; $global:WtermLastError = $lastError; $e = ([char]27).ToString(); if ($global:WtermPromptSeen) { [Console]::Write($e + ']133;D;' + $code + [char]7) }; $global:WtermPromptSeen = $true; $p = $ExecutionContext.SessionState.Path.CurrentFileSystemLocation.Path; [Console]::Write($e + ']9;9;' + $p + [char]7 + $e + ']133;A' + [char]7); $label = if ($global:WtermOriginalPrompt) { & $global:WtermOriginalPrompt } else { 'PS ' + $p + '> ' }; [string]$label + $e + ']133;B' + [char]7 }";
+
 /// 诊断日志：写入 %TEMP%\wterm-debug.log（仅 debug 构建启用）。
 /// 前端 JS 异常也会通过 `log_frontend` 汇总到这里，便于排查白屏类问题。
 pub fn dbg(msg: &str) {
@@ -187,7 +191,7 @@ pub fn spawn(
     if matches!(shell_name.as_str(), "pwsh" | "powershell") {
         cmd.arg("-NoExit");
         cmd.arg("-Command");
-        cmd.arg("$global:WtermOriginalPrompt = $function:prompt; $global:WtermPromptSeen = $false; function global:prompt { $e = ([char]27).ToString(); if ($global:WtermPromptSeen) { [Console]::Write($e + ']133;D' + [char]7) }; $global:WtermPromptSeen = $true; $p = $ExecutionContext.SessionState.Path.CurrentFileSystemLocation.Path; [Console]::Write($e + ']9;9;' + $p + [char]7 + $e + ']133;A' + [char]7); $label = if ($global:WtermOriginalPrompt) { & $global:WtermOriginalPrompt } else { 'PS ' + $p + '> ' }; [string]$label + $e + ']133;B' + [char]7 }");
+        cmd.arg(POWERSHELL_PROMPT_HOOK);
     } else if shell_name == "cmd" {
         cmd.arg("/K");
         cmd.arg("prompt $E]133;D$E\\$E]9;9;$P$E\\$E]133;A$E\\$P$G$E]133;B$E\\$S");

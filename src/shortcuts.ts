@@ -24,6 +24,8 @@ export const actions = {
   reconnect: ["重新连接", "Ctrl+Shift+U"],
   fontLarger: ["放大终端字体", "Ctrl+="],
   fontSmaller: ["缩小终端字体", "Ctrl+-"],
+  aiExplain: ["AI 解释选中内容", "Ctrl+Shift+I"],
+  aiPanel: ["AI 助手面板", "Ctrl+Shift+K"],
 } as const;
 
 export type Action = keyof typeof actions;

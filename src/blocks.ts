@@ -1,5 +1,6 @@
 import { configStorage } from './config-storage';
 import type { Terminal } from '@xterm/xterm';
+import { aiAutoDiagnose } from './ai-config';
 
 export type BlocksMode = 'off' | 'shell' | 'compatible';
 
@@ -14,6 +15,8 @@ interface Block {
   output: string;
   body: HTMLElement;
   state: HTMLElement;
+  marker?: ReturnType<Terminal['registerMarker']>;
+  reliable: boolean;
 }
 
 /** An on-demand command history that replaces the terminal view while open. */
@@ -21,6 +24,7 @@ export class CommandBlocks {
   private mode: BlocksMode;
   private promptReady = false;
   private inputLine = '';
+  private inputReliable = true;
   private current?: Block;
   private refreshPending = false;
   private readonly toggle: HTMLButtonElement;
@@ -33,7 +37,8 @@ export class CommandBlocks {
   private readonly onModeChange = () => this.setMode(blocksMode());
 
   constructor(private readonly term: Terminal, private readonly pane: HTMLElement,
-    private readonly rerun: (command: string) => void) {
+    private readonly rerun: (command: string) => void,
+    private readonly onFinished?: (command: string, output: string, exitCode: number) => void) {
     this.mode = blocksMode();
     this.toggle = document.createElement('button');
     this.toggle.type = 'button';
@@ -87,7 +92,7 @@ export class CommandBlocks {
     this.empty.textContent = mode === 'shell'
       ? '等待支持 OSC 133 的 Shell 提示符。运行命令后将显示在这里。'
       : '运行命令后，会在这里显示命令和输出。';
-    if (mode === 'off') this.finish();
+    if (mode === 'off' && !aiAutoDiagnose()) this.finish();
   }
 
   promptStart(): void {
@@ -110,33 +115,40 @@ export class CommandBlocks {
     this.toggle.setAttribute('aria-label', `查看命令块${count ? `，${count} 条记录` : ''}`);
   }
 
-  promptEnd(): void { this.promptReady = true; }
+  revealTerminal(): void { this.show(false); }
+
+  promptEnd(): void { this.promptReady = true; this.inputLine = ''; this.inputReliable = true; }
 
   commandFinished(exitCode?: string): void { this.finish(exitCode); }
 
   input(data: string): void {
-    if (this.mode === 'off' || (this.mode === 'shell' && !this.promptReady)) return;
+    if ((this.mode === 'off' && !aiAutoDiagnose()) || (this.mode !== 'compatible' && !this.promptReady)) return;
     for (const char of data) {
       if (char === '\r' || char === '\n') {
         const command = this.inputLine.trim();
         this.inputLine = '';
-        if (command) this.submit(command);
+        if (command) this.submit(command, this.inputReliable && this.promptReady);
         this.promptReady = false;
       } else if (char === '\x7f' || char === '\b') {
-        this.inputLine = this.inputLine.slice(0, -1);
+        this.inputLine = [...this.inputLine].slice(0, -1).join('');
       } else if (char === '\x15') {
         this.inputLine = '';
       } else if (char === '\x03') {
         this.inputLine = '';
         this.finish();
+      } else if (char === '\x1b' || char === '\t') {
+        // Cursor/history/completion edits are not faithfully reconstructed from onData.
+        this.inputReliable = false;
       } else if (char >= ' ' && char !== '\x7f' && this.inputLine.length < 4096) {
         this.inputLine += char;
+      } else {
+        this.inputReliable = false;
       }
     }
   }
 
-  submit(command: string): void {
-    if (this.mode === 'off') return;
+  submit(command: string, reliable = true): void {
+    if (this.mode === 'off' && !aiAutoDiagnose()) return;
     this.finish();
     this.show(false);
     const buffer = this.term.buffer.active;
@@ -158,10 +170,12 @@ export class CommandBlocks {
     };
     run.onclick = () => { this.rerun(command); this.term.focus(); };
     actions.append(copy, run); card.append(summary, actions, body);
-    this.empty.hidden = true; this.list.append(card);
-    while (this.list.querySelectorAll('.command-block').length > 100) this.list.querySelector('.command-block')?.remove();
-    this.updateCount();
-    this.current = { command, startLine, output: '', body, state };
+    if (this.mode !== 'off') {
+      this.empty.hidden = true; this.list.append(card);
+      while (this.list.querySelectorAll('.command-block').length > 100) this.list.querySelector('.command-block')?.remove();
+      this.updateCount();
+    }
+    this.current = { command, startLine, output: '', body, state, marker: this.term.registerMarker(0), reliable };
     this.list.scrollTop = this.list.scrollHeight;
   }
 
@@ -170,7 +184,8 @@ export class CommandBlocks {
     if (!block || this.term.buffer.active !== this.term.buffer.normal) return;
     const buffer = this.term.buffer.normal;
     const end = Math.min(buffer.length - 1, buffer.baseY + buffer.cursorY);
-    const first = Math.max(block.startLine, end - 1999);
+    const startLine = block.marker ? (block.marker.isDisposed ? 0 : block.marker.line + 1) : block.startLine;
+    const first = Math.max(startLine, end - 1999);
     const lines: string[] = [];
     for (let i = first; i <= end; i++) {
       const line = buffer.getLine(i);
@@ -192,7 +207,12 @@ export class CommandBlocks {
     this.refresh();
     this.current.state.textContent = exitCode === undefined ? '完成' : `退出 ${exitCode}`;
     this.current.state.classList.toggle('failed', exitCode !== undefined && exitCode !== '0');
+    const block = this.current;
     this.current = undefined;
+    block.marker?.dispose();
+    if (block.reliable && exitCode !== undefined && /^-?\d+$/.test(exitCode) && Number.isSafeInteger(Number(exitCode))) {
+      this.onFinished?.(block.command, block.output, Number(exitCode));
+    }
   }
 
   dispose(): void {

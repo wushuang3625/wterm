@@ -328,6 +328,11 @@ pub async fn connect(
                             let mut slice: &[u8] = &data;
                             if channel.data(&mut slice).await.is_err() { break; }
                         }
+                        Some(crate::session::SshCommand::Insert(data, reply)) => {
+                            let result = channel.data(&mut data.as_slice()).await.map_err(|error| format!("SSH 写入失败：{error}"));
+                            let failed = result.is_err(); let _ = reply.send(result);
+                            if failed { break; }
+                        }
                         Some(crate::session::SshCommand::Resize(c, r)) => {
                             let _ = channel.window_change(c as u32, r as u32, 0, 0).await;
                         }
@@ -446,6 +451,11 @@ pub async fn connect_on_existing(
                         Some(crate::session::SshCommand::Write(data)) => {
                             let mut slice: &[u8] = &data;
                             if channel.data(&mut slice).await.is_err() { break; }
+                        }
+                        Some(crate::session::SshCommand::Insert(data, reply)) => {
+                            let result = channel.data(&mut data.as_slice()).await.map_err(|error| format!("SSH 写入失败：{error}"));
+                            let failed = result.is_err(); let _ = reply.send(result);
+                            if failed { break; }
                         }
                         Some(crate::session::SshCommand::Resize(c, r)) => {
                             let _ = channel.window_change(c as u32, r as u32, 0, 0).await;

@@ -29,6 +29,7 @@ pub fn resolve(spec: &str, profiles: &[SshProfile], default_user: &str) -> anyho
                 bail!("跳板主机或用户名无效");
             }
             let mut profile = profiles.iter().find(|p| p.name == alias).cloned().unwrap_or_else(|| SshProfile {
+                id: None,
                 name: alias.into(), host: alias.into(), port: 22, username: user.into(), auth: "agent".into(),
                 identity_file: None, group: None, tags: vec![], color: None, login_script: None,
                 keepalive_secs: None, auto_reconnect: false, reconnect_attempts: None, reconnect_delay_secs: None, proxy_jump: None,

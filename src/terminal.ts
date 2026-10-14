@@ -15,6 +15,8 @@ import { createHostKeyChannel } from "./hostkey";
 import { shortcutAction } from "./shortcuts";
 import { getTerminalTheme } from "./themes";
 import { CommandBlocks } from './blocks';
+import { diagnoseFailure } from './ai';
+import { aiReady } from './ai-config';
 import { InlineImagePreviewAddon } from './inline-image-preview';
 import { notifyCommandCompleted, notifyDisconnect, scanKeywordNotification } from "./notifications";
 
@@ -36,6 +38,7 @@ export interface TermSession {
   status: SessionStatus;
   unlisteners: UnlistenFn[];
   zmodem?: ZmodemHandler;
+  pasteInput?: (text: string) => Promise<void>;
   profile?: SshProfile;
   localShell?: string | null;
   cwd?: string;
@@ -379,6 +382,7 @@ export function createTerminal(container: HTMLDivElement): {
   container.addEventListener("contextmenu", async (e) => {
     e.preventDefault();
     if (e.shiftKey) return;
+    if (aiReady() && term.hasSelection()) return;
     const mode = configStorage.getItem("wterm_right_click") || "copy-paste";
     if (mode === "disabled") return;
     try {
@@ -749,6 +753,10 @@ export async function bindSessionIO(
     command => {
       blocks.submit(command);
       void invoke('write_session', { id, data: command + '\r' });
+    }, (command, output, exitCode) => {
+      if (session.status === 'connected' && session.pane.classList.contains('active')) {
+        diagnoseFailure(session.id, { command, output, exitCode });
+      }
     });
   session.unlisteners.push(() => blocks.dispose());
   let commandStartedAt = 0;
@@ -803,11 +811,14 @@ export async function bindSessionIO(
   session.pane.append(transferStatus);
 
   let writes = Promise.resolve();
-  const send = (data: number[]) => {
-    writes = writes.then(() => invoke<void>("write_session_bytes", { id, data })).catch(() => {
+  const enqueueInput = (write: () => Promise<void>) => {
+    const operation = writes.then(write);
+    writes = operation.catch(() => {
       zmodem.cancel();
     });
+    return operation;
   };
+  const send = (data: number[]) => enqueueInput(() => invoke<void>("write_session_bytes", { id, data }));
   const zmodem = createZmodemHandler(term, send, {
     onState: active => {
       transferStatus.hidden = !active;
@@ -855,7 +866,7 @@ export async function bindSessionIO(
     if (data.includes("\r") || data.includes("\n")) commandStartedAt = Date.now();
     blocks.input(data);
     const bytes = Array.from(new TextEncoder().encode(data));
-    send(bytes);
+    void send(bytes).catch(error => console.warn('终端写入失败', error));
     const targets = broadcastTargetProvider?.(id).filter(target => target !== id) ?? [];
     if (targets.length) {
       broadcastWrites = broadcastWrites
@@ -869,6 +880,16 @@ export async function bindSessionIO(
   term.onResize(({ cols, rows }) => {
     invoke("resize_session", { id, cols, rows }).catch(() => {});
   });
+  session.pasteInput = async text => {
+    if (session.status !== 'connected' || zmodem.isActive()) throw new Error('请先选择一个可输入的终端会话');
+    blocks.revealTerminal(); term.clearSelection(); term.scrollToBottom(); term.focus();
+    // AI insertion uses the native input path directly, without synthesizing a
+    // browser paste event or broadcasting to other panes. Keep shell paste mode.
+    const bracketed = term.modes.bracketedPasteMode && !term.options.ignoreBracketedPasteMode;
+    blocks.input(text);
+    await enqueueInput(() => invoke<void>('insert_terminal_input', { id, text, bracketed }));
+    if (session.pane.classList.contains('active') && document.activeElement === term.textarea) term.scrollToBottom();
+  };
 }
 
 export async function closeSession(id: string): Promise<void> {

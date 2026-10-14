@@ -1,4 +1,6 @@
 //! Tauri desktop application and terminal session services.
+pub mod ai;
+pub mod ai_history;
 pub mod credentials;
 pub mod events;
 pub mod known_hosts;
@@ -12,8 +14,8 @@ pub mod ssh_agent;
 pub mod ssh_auth;
 pub mod ssh_route;
 pub mod sshconfig;
-pub mod state;
 pub mod startup;
+pub mod state;
 pub mod transfers;
 
 mod webview;

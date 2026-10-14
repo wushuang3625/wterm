@@ -8,6 +8,11 @@ import { showKnownHostsManager } from "./knownhosts";
 import { deleteCredential, loadCredential, passwordCredentialKey, saveCredential } from "./credentials";
 import { applyAppearance } from "./appearance";
 import { defaultLogColorRules, loadLogColorRules, saveLogColorRules, ruleError, type LogColorRule } from './log-colors';
+import {
+  AI_PROVIDERS, aiConfig, aiAutoDiagnose, aiCredentialKey, setAiActiveModel,
+  setAiBaseUrl, setAiModels, setAiProtocol, setAiProvider, saveAiKey, deleteAiKey, hasAiKey,
+  type AiProtocol,
+} from './ai-config';
 
 export interface ImportedHost {
   alias: string;
@@ -341,6 +346,7 @@ export function showNewSshDialog(): void {
     if (!Number.isInteger(reconnectDelay) || reconnectDelay < 1 || reconnectDelay > 60) { $('#f-err').textContent = '重连间隔必须是 1–60 秒'; return; }
     if ($<HTMLSelectElement>('#f-auth').value === 'key' && !key) { $('#f-err').textContent = '请填写私钥路径'; return; }
     const profile: SshProfile = {
+      id: crypto.randomUUID(),
       name: $<HTMLInputElement>("#f-name").value.trim() || host,
       host,
       port,
@@ -431,6 +437,9 @@ export async function showSettingsDialog(): Promise<void> {
 
   const themeOptionsHtml = WTERM_THEMES.map(theme => `<option value="${theme.id}">${theme.name}</option>`).join("");
 
+  const aiProviderOptionsHtml = AI_PROVIDERS.map(provider =>
+    `<option value="${provider.id}">${provider.label}</option>`).join("");
+
   const contentHtml = `
     <div class="settings-modal">
       <nav class="settings-sidebar">
@@ -441,6 +450,10 @@ export async function showSettingsDialog(): Promise<void> {
         <div class="settings-nav-item" data-tab="security">
           <span class="icon"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.2 L13 4.2 V8.4 C13 11.6 10.8 13.4 8 14.3 C5.2 13.4 3 11.6 3 8.4 V4.2 Z"/></svg></span>
           <span>凭据与安全</span>
+        </div>
+        <div class="settings-nav-item" data-tab="ai">
+          <span class="icon"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5 L9.6 6.4 L14.5 8 L9.6 9.6 L8 14.5 L6.4 9.6 L1.5 8 L6.4 6.4 Z"/></svg></span>
+          <span>AI 助手</span>
         </div>
         <div class="settings-nav-item" data-tab="shortcuts">
           <span class="icon"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="4.2" width="12" height="7.6" rx="1.5"/><path d="M4.4 7h1.4 M7.3 7h1.4 M10.2 7h1.4 M5.2 9.6h5.6"/></svg></span>
@@ -555,7 +568,57 @@ export async function showSettingsDialog(): Promise<void> {
           </div>
         </section>
 
-        <!-- 3. 快捷键 -->
+        <!-- 3. AI 助手 -->
+        <section class="settings-pane" id="pane-ai">
+          <h3 class="settings-title">AI 助手（BYOK）</h3>
+          <p class="setting-hint">使用自己的 API Key，由本机直连服务商。手动请求发送选中内容、面板输入和本对话历史；切换会话会清空 AI 对话。</p>
+          <div class="settings-card">
+            <div class="settings-card-title">服务商</div>
+            <div class="field"><label for="cfg-ai-provider">Provider 预设</label>
+              <select id="cfg-ai-provider">
+                <option value="">请选择…</option>
+                ${aiProviderOptionsHtml}
+              </select>
+              <p class="setting-hint">选择预设会自动填写 Base URL 与协议，之后仍可手动修改。</p>
+            </div>
+            <div class="field"><label for="cfg-ai-base-url">Base URL</label><input id="cfg-ai-base-url" type="text" spellcheck="false" placeholder="https://api.deepseek.com/v1" /></div>
+            <div class="field"><label for="cfg-ai-protocol">协议</label><select id="cfg-ai-protocol">
+              <option value="openai">OpenAI 兼容（DeepSeek / Moonshot / 千问 / Ollama…）</option>
+              <option value="anthropic">Anthropic (Claude)</option>
+            </select></div>
+            <div class="field"><label for="cfg-ai-key">API Key</label>
+              <div class="settings-path-row">
+                <input id="cfg-ai-key" type="password" autocomplete="off" placeholder="输入后点击保存，存入系统 Keychain" />
+                <button type="button" class="btn" id="cfg-ai-key-save">保存 Key</button>
+                <button type="button" class="btn danger" id="cfg-ai-key-clear">清除</button>
+              </div>
+              <p class="setting-hint" id="cfg-ai-key-status"></p>
+              <p class="setting-hint">Key 按服务地址与协议分别保存。切换服务后请保存对应 Key；早期版本的共用 Key 需要重新保存。</p>
+            </div>
+          </div>
+          <div class="settings-card">
+            <div class="settings-card-title">模型</div>
+            <div class="settings-inline-actions">
+              <button type="button" class="btn" id="cfg-ai-fetch-models">获取模型列表</button>
+              <span class="setting-hint" id="cfg-ai-fetch-status"></span>
+            </div>
+            <div class="ai-model-picker" id="ai-model-picker" hidden>
+              <p class="setting-hint">勾选需要添加的模型（已添加的默认勾选）：</p>
+              <div class="ai-model-checkboxes" id="ai-model-checkboxes"></div>
+            </div>
+            <div class="ai-model-manual">
+              <input id="ai-model-manual-input" type="text" aria-label="手动输入模型 ID" spellcheck="false" placeholder="手动输入模型 ID（列表不可用时）" />
+              <button type="button" class="btn" id="ai-model-manual-add">添加</button>
+            </div>
+            <div class="ai-model-list" id="ai-model-list"></div>
+          </div>
+          <div class="settings-card">
+            <label class="setting-check"><input type="checkbox" id="cfg-ai-auto-diagnose" /> 命令失败后自动诊断</label>
+            <p class="setting-hint">默认关闭。开启后，当前活动会话上报非零退出码时会发送该命令、退出码和最后最多 6000 字符的输出；常见密钥与密码会尽力隐藏，敏感环境请保持关闭。不会执行修复命令。需 Shell 上报 OSC 133 退出码；复杂输入编辑、AI 正在回复或你正在输入问题时跳过。</p>
+          </div>
+        </section>
+
+        <!-- 4. 快捷键 -->
         <section class="settings-pane" id="pane-shortcuts">
           <h3 class="settings-title">全局与常用快捷键</h3>
           <p class="setting-hint">点击键位框后按下新的组合键即可修改。分屏仅影响当前标签，可连续拆分；关闭窗格会自动合并剩余布局。</p>
@@ -574,7 +637,7 @@ export async function showSettingsDialog(): Promise<void> {
           <div style="font-size:13px;color:var(--text-dim);line-height:1.8;">
             <p><strong style="color:var(--text);">wterm</strong> — 高性能、设计驱动的现代化 SSH 与终端工作台。</p>
             <p>基于 Rust (Tauri 2) + xterm.js + russh 构建，支持高性能 PTY、ZMODEM (rz/sz)、多通道复用及左右多屏分屏。</p>
-            <p style="margin-top:12px;font-size:12px;">版本: v0.1.5</p>
+            <p style="margin-top:12px;font-size:12px;">版本: v0.1.6</p>
           </div>
         </section>
       </main>
@@ -771,6 +834,7 @@ export async function showSettingsDialog(): Promise<void> {
     ['搜索与面板', ['search', 'quickConnect', 'commandPalette']],
     ['连接与工具', ['connections', 'favorites', 'sftp', 'batch', 'settings', 'openDirectory', 'newWindow', 'reconnect']],
     ['视图', ['fontLarger', 'fontSmaller']],
+    ['AI 助手', ['aiExplain', 'aiPanel']],
   ];
   const renderShortcutRow = (key: Action) => {
     const row = document.createElement('label'); row.className = 'shortcut-item';
@@ -871,6 +935,189 @@ export async function showSettingsDialog(): Promise<void> {
     close();
   };
 
+  // ---------- AI 助手（BYOK） ----------
+  const initialAi = aiConfig();
+  let aiAddedModels: string[] = [...initialAi.models];
+  let aiActiveModel = initialAi.models.includes(initialAi.activeModel)
+    ? initialAi.activeModel
+    : (initialAi.models[0] || '');
+  let aiFetchedModels: string[] = [];
+  $<HTMLInputElement>('#cfg-ai-auto-diagnose').checked = aiAutoDiagnose();
+  $<HTMLSelectElement>('#cfg-ai-provider').value = initialAi.provider;
+  $<HTMLInputElement>('#cfg-ai-base-url').value = initialAi.baseUrl;
+  $<HTMLSelectElement>('#cfg-ai-protocol').value = initialAi.protocol;
+  const aiKeyStatus = $('#cfg-ai-key-status');
+  const aiFetchStatus = $('#cfg-ai-fetch-status');
+  const aiFetchButton = $<HTMLButtonElement>('#cfg-ai-fetch-models');
+  const aiAddress = () => ({
+    baseUrl: $<HTMLInputElement>('#cfg-ai-base-url').value.trim(),
+    protocol: $<HTMLSelectElement>('#cfg-ai-protocol').value as AiProtocol,
+  });
+  let aiAddressEpoch = 0;
+  let aiKeyStatusEpoch = 0;
+  const updateAiKeyStatus = async () => {
+    const epoch = ++aiKeyStatusEpoch;
+    const { baseUrl, protocol } = aiAddress();
+    try {
+      const exists = await hasAiKey(baseUrl, protocol);
+      if (epoch === aiKeyStatusEpoch) aiKeyStatus.textContent = exists ? '已保存 API Key' : '尚未保存 API Key';
+    } catch (error) {
+      if (epoch === aiKeyStatusEpoch) aiKeyStatus.textContent = `读取 Key 状态失败：${String(error)}`;
+    }
+  };
+  void updateAiKeyStatus();
+  const resetAiEndpoint = () => {
+    aiAddressEpoch++;
+    aiAddedModels = []; aiActiveModel = ''; aiFetchedModels = [];
+    $<HTMLInputElement>('#cfg-ai-key').value = '';
+    $('#ai-model-picker').hidden = true;
+    aiFetchStatus.textContent = '';
+    renderAiAddedModels();
+    void updateAiKeyStatus();
+  };
+
+  const renderAiAddedModels = () => {
+    const list = $('#ai-model-list');
+    list.replaceChildren();
+    if (!aiAddedModels.length) {
+      const empty = document.createElement('p');
+      empty.className = 'setting-hint';
+      empty.textContent = '尚未添加模型。填写 Base URL 与 Key 后点击「获取模型列表」，或手动输入模型 ID。';
+      list.append(empty);
+      return;
+    }
+    for (const model of aiAddedModels) {
+      const row = document.createElement('label');
+      row.className = 'ai-model-row';
+      const radio = document.createElement('input');
+      radio.type = 'radio';
+      radio.name = 'ai-active-model';
+      radio.checked = model === aiActiveModel;
+      radio.onchange = () => { aiActiveModel = model; };
+      const name = document.createElement('span');
+      name.className = 'ai-model-name';
+      name.textContent = model;
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'log-rule-icon';
+      remove.textContent = '×';
+      remove.title = '移除该模型';
+      remove.onclick = () => {
+        aiAddedModels = aiAddedModels.filter(item => item !== model);
+        if (aiActiveModel === model) aiActiveModel = aiAddedModels[0] || '';
+        renderAiAddedModels();
+        renderAiModelPicker();
+      };
+      row.append(radio, name, remove);
+      list.append(row);
+    }
+  };
+  const renderAiModelPicker = () => {
+    const box = $('#ai-model-checkboxes');
+    box.replaceChildren();
+    for (const model of aiFetchedModels) {
+      const label = document.createElement('label');
+      label.className = 'ai-model-check';
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.checked = aiAddedModels.includes(model);
+      checkbox.onchange = () => {
+        if (checkbox.checked) {
+          if (!aiAddedModels.includes(model)) aiAddedModels.push(model);
+          if (!aiActiveModel) aiActiveModel = model;
+        } else {
+          aiAddedModels = aiAddedModels.filter(item => item !== model);
+          if (aiActiveModel === model) aiActiveModel = aiAddedModels[0] || '';
+        }
+        renderAiAddedModels();
+      };
+      label.append(checkbox, document.createTextNode(model));
+      box.append(label);
+    }
+  };
+  renderAiAddedModels();
+
+  $<HTMLSelectElement>('#cfg-ai-provider').onchange = event => {
+    const preset = AI_PROVIDERS.find(provider => provider.id === (event.currentTarget as HTMLSelectElement).value);
+    if (!preset) return;
+    $<HTMLInputElement>('#cfg-ai-base-url').value = preset.base_url;
+    $<HTMLSelectElement>('#cfg-ai-protocol').value = preset.protocol;
+    resetAiEndpoint();
+  };
+  $<HTMLInputElement>('#cfg-ai-base-url').onchange = resetAiEndpoint;
+  $<HTMLSelectElement>('#cfg-ai-protocol').onchange = resetAiEndpoint;
+
+  $('#cfg-ai-key-save').onclick = async () => {
+    const input = $<HTMLInputElement>('#cfg-ai-key');
+    const key = input.value.trim();
+    if (!key) { $('#cfg-error').textContent = '请先输入 API Key'; return; }
+    const epoch = aiAddressEpoch;
+    try {
+      const { baseUrl, protocol } = aiAddress();
+      await saveAiKey(key, baseUrl, protocol);
+      if (epoch !== aiAddressEpoch) return;
+      input.value = '';
+      await updateAiKeyStatus();
+    } catch (error) {
+      $('#cfg-error').textContent = `保存 Key 失败：${String(error)}`;
+    }
+  };
+  $('#cfg-ai-key-clear').onclick = async () => {
+    try {
+      const { baseUrl, protocol } = aiAddress();
+      await deleteAiKey(baseUrl, protocol);
+      await updateAiKeyStatus();
+    } catch (error) {
+      $('#cfg-error').textContent = `清除 Key 失败：${String(error)}`;
+    }
+  };
+
+  aiFetchButton.onclick = async () => {
+    const baseUrl = $<HTMLInputElement>('#cfg-ai-base-url').value.trim();
+    const protocol = $<HTMLSelectElement>('#cfg-ai-protocol').value as AiProtocol;
+    if (!baseUrl) { $('#cfg-error').textContent = '请先填写 Base URL'; return; }
+    const epoch = aiAddressEpoch;
+    // 输入了新 Key 但尚未保存时，先落盘再拉取，避免后端拿到旧 Key
+    const pendingKey = $<HTMLInputElement>('#cfg-ai-key').value.trim();
+    if (pendingKey) {
+      try {
+        await saveAiKey(pendingKey, baseUrl, protocol);
+        if (epoch !== aiAddressEpoch) return;
+        $<HTMLInputElement>('#cfg-ai-key').value = '';
+        await updateAiKeyStatus();
+      } catch (error) {
+        $('#cfg-error').textContent = `保存 Key 失败：${String(error)}`;
+        return;
+      }
+    }
+    aiFetchButton.disabled = true;
+    aiFetchStatus.textContent = '正在获取…';
+    try {
+      const models = await invoke<string[]>('ai_models', { baseUrl, protocol });
+      if (epoch !== aiAddressEpoch) return;
+      aiFetchedModels = models;
+      renderAiModelPicker();
+      $('#ai-model-picker').hidden = models.length === 0;
+      aiFetchStatus.textContent = models.length ? `共 ${models.length} 个模型，勾选添加` : '未返回模型，请手动输入模型 ID';
+    } catch (error) {
+      if (epoch !== aiAddressEpoch) return;
+      aiFetchStatus.textContent = '';
+      $('#cfg-error').textContent = `获取模型列表失败：${String(error)}`;
+    } finally {
+      aiFetchButton.disabled = false;
+    }
+  };
+
+  $('#ai-model-manual-add').onclick = () => {
+    const input = $<HTMLInputElement>('#ai-model-manual-input');
+    const id = input.value.trim();
+    if (!id) return;
+    if (!aiAddedModels.includes(id)) aiAddedModels.push(id);
+    if (!aiActiveModel) aiActiveModel = id;
+    input.value = '';
+    renderAiAddedModels();
+  };
+
   $("#cfg-save").onclick = async () => {
     const invalidRule = logRules.findIndex(rule => ruleError(rule));
     if (invalidRule >= 0) { $('#cfg-error').textContent = `规则 ${invalidRule + 1}：${ruleError(logRules[invalidRule])}`; logRuleList.querySelectorAll<HTMLInputElement>('.log-rule-pattern')[invalidRule]?.focus(); return; }
@@ -883,6 +1130,20 @@ export async function showSettingsDialog(): Promise<void> {
     for (const [id, , , min, max] of numeric) {
       const input = $<HTMLInputElement>(`#cfg-${id}`), value = Number(input.value);
       if (!input.value || !Number.isFinite(value) || value < min || value > max) { input.reportValidity(); return; }
+    }
+    if (aiAddedModels.length && !$<HTMLInputElement>('#cfg-ai-base-url').value.trim()) {
+      $('#cfg-error').textContent = '已添加 AI 模型但未填写 Base URL';
+      return;
+    }
+    const { baseUrl: aiBaseUrl, protocol: aiProtocol } = aiAddress();
+    if (aiBaseUrl) {
+      try { aiCredentialKey(aiBaseUrl, aiProtocol); }
+      catch (error) { $('#cfg-error').textContent = String(error); return; }
+    }
+    const unsavedAiKey = $<HTMLInputElement>('#cfg-ai-key').value.trim();
+    if (unsavedAiKey) {
+      try { await saveAiKey(unsavedAiKey, aiBaseUrl, aiProtocol); }
+      catch (error) { $('#cfg-error').textContent = `保存 Key 失败：${String(error)}`; return; }
     }
     configStorage.setItem('wterm_log_colors', String($<HTMLInputElement>('#cfg-log-colors').checked));
     configStorage.setItem('wterm_font_family', $<HTMLInputElement>('#cfg-font-family').value.trim());
@@ -914,6 +1175,13 @@ export async function showSettingsDialog(): Promise<void> {
     configStorage.setItem("wterm_notify_min_seconds", $<HTMLInputElement>("#cfg-notify-min-seconds").value);
     configStorage.setItem("wterm_notify_keywords", $<HTMLInputElement>("#cfg-notify-keywords").value.trim());
     configStorage.setItem("wterm_keychain_enabled", String($<HTMLInputElement>("#cfg-keychain-enabled").checked));
+    setAiProvider($<HTMLSelectElement>('#cfg-ai-provider').value);
+    setAiBaseUrl($<HTMLInputElement>('#cfg-ai-base-url').value);
+    setAiProtocol($<HTMLSelectElement>('#cfg-ai-protocol').value as AiProtocol);
+    setAiModels(aiAddedModels);
+    setAiActiveModel(aiActiveModel || aiAddedModels[0] || '');
+    configStorage.setItem('wterm_ai_auto_diagnose', String($<HTMLInputElement>('#cfg-ai-auto-diagnose').checked));
+    window.dispatchEvent(new Event('wterm-ai-config-change'));
     try {
       await flushSettings();
       if (!pathInput.disabled && pathInput.value.trim() !== settingsPath) {

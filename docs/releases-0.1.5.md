@@ -18,7 +18,7 @@
 - 系统 ssh-agent、真实 JumpServer、不同 SFTP 服务端，以及 Windows 11 第一层右键菜单的显示与启动仍需在目标环境验收。
 - SSH config 的 Include、Match 与 ProxyCommand，递归目录传输及跨重启断点续传仍未实现。
 
-详细安装说明见 [Windows Explorer 集成](windows-explorer.md)，其余边界见 [README](../README.md#当前边界)。
+详细安装说明见 [Windows Explorer 集成](windows-explorer.md)，其余边界见 [README](../README.zh-CN.md#当前边界)。
 
 ## 本次验证
 

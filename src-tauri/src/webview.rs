@@ -1,6 +1,7 @@
 use crate::state::AppState;
 use crate::{
-    credentials, known_hosts, profiles, pty, settings, sftp, ssh, sshconfig, transfers, windowing,
+    ai, credentials, known_hosts, profiles, pty, settings, sftp, ssh, sshconfig, transfers,
+    windowing,
 };
 use tauri::{Manager, State};
 
@@ -147,11 +148,174 @@ async fn spawn_ssh_on_existing(
 
 #[tauri::command]
 fn write_session(state: State<'_, AppState>, id: String, data: String) -> Result<(), String> {
+    write_input(&state, &id, data.as_bytes())
+}
+
+fn write_input(state: &AppState, id: &str, data: &[u8]) -> Result<(), String> {
     let sessions = state.sessions.lock().unwrap();
-    if let Some(s) = sessions.get(&id) {
-        s.write(data.as_bytes()).map_err(|e| e.to_string())?;
+    let session = sessions
+        .get(id)
+        .ok_or_else(|| "终端会话已结束或不存在，请重新连接".to_string())?;
+    session.write(data).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn insert_terminal_input(
+    state: State<'_, AppState>,
+    id: String,
+    text: String,
+    bracketed: bool,
+) -> Result<(), String> {
+    insert_input(&state, &id, &text, bracketed).await
+}
+
+pub(crate) async fn insert_input(
+    state: &AppState,
+    id: &str,
+    text: &str,
+    bracketed: bool,
+) -> Result<(), String> {
+    if text.trim().is_empty()
+        || text.chars().count() > 4096
+        || text
+            .chars()
+            .any(|character| character.is_control() || matches!(character, '\u{2028}' | '\u{2029}'))
+    {
+        return Err("只支持不含控制字符的单行命令".into());
+    }
+    let data = if bracketed {
+        format!("\x1b[200~{text}\x1b[201~")
+    } else {
+        text.to_owned()
+    };
+    let confirmation = {
+        let sessions = state.sessions.lock().unwrap();
+        let session = sessions
+            .get(id)
+            .ok_or_else(|| "终端会话已结束或不存在，请重新连接".to_string())?;
+        session
+            .insert(data.as_bytes())
+            .map_err(|error| error.to_string())?
+    };
+    if let Some(confirmation) = confirmation {
+        tokio::time::timeout(std::time::Duration::from_secs(10), confirmation)
+            .await
+            .map_err(|_| "未收到终端写入确认，请检查终端输入行".to_string())?
+            .map_err(|_| "SSH 通道已结束，请重新连接".to_string())??;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod input_tests {
+    use super::*;
+
+    #[test]
+    fn missing_terminal_does_not_acknowledge_input() {
+        let state = AppState::default();
+        let error = write_input(&state, "disconnected", b"echo fixture").unwrap_err();
+        assert!(error.contains("终端会话已结束或不存在"));
+    }
+
+    #[tokio::test]
+    async fn insertion_rejects_missing_targets_and_input_controls() {
+        let state = AppState::default();
+        for text in [
+            "",
+            "echo a\necho b",
+            "echo\r",
+            "\x1b[200~echo",
+            "a\u{2028}b",
+        ] {
+            assert!(insert_input(&state, "fixture", text, false)
+                .await
+                .unwrap_err()
+                .contains("单行命令"));
+        }
+        assert!(insert_input(&state, "fixture", "echo fixture", false)
+            .await
+            .unwrap_err()
+            .contains("请重新连接"));
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn local_terminal_receives_inserted_input_without_submitting_it() {
+        use portable_pty::{native_pty_system, CommandBuilder, PtySize};
+        use std::io::Read;
+        use std::sync::{mpsc, Arc, Mutex};
+        use std::time::{Duration, Instant};
+
+        let pair = native_pty_system()
+            .openpty(PtySize {
+                rows: 24,
+                cols: 80,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .unwrap();
+        let mut command = CommandBuilder::new("cmd.exe");
+        command.args(["/D", "/Q"]);
+        let child = pair.slave.spawn_command(command).unwrap();
+        let mut reader = pair.master.try_clone_reader().unwrap();
+        let writer = pair.master.take_writer().unwrap();
+        let state = AppState::default();
+        state.sessions.lock().unwrap().insert(
+            "fixture".into(),
+            SessionKind::Local {
+                writer: Mutex::new(writer),
+                child: Arc::new(Mutex::new(child)),
+                master: Mutex::new(pair.master),
+            },
+        );
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let mut buffer = [0; 4096];
+            while let Ok(count) = reader.read(&mut buffer) {
+                if count == 0 || tx.send(buffer[..count].to_vec()).is_err() {
+                    break;
+                }
+            }
+        });
+        fn read_until(rx: &mpsc::Receiver<Vec<u8>>, output: &mut String, needle: &str) -> bool {
+            let deadline = Instant::now() + Duration::from_secs(3);
+            while Instant::now() < deadline {
+                if output.contains(needle) {
+                    return true;
+                }
+                if let Ok(bytes) = rx.recv_timeout(Duration::from_millis(50)) {
+                    output.push_str(&String::from_utf8_lossy(&bytes));
+                }
+            }
+            output.contains(needle)
+        }
+        let mut output = String::new();
+        let ready = read_until(&rx, &mut output, ">");
+        let wrote = insert_input(&state, "fixture", "echo WTERM_INPUT_ONLY", false)
+            .await
+            .is_ok();
+        let echoed = read_until(&rx, &mut output, "WTERM_INPUT_ONLY");
+        while let Ok(bytes) = rx.recv_timeout(Duration::from_millis(150)) {
+            output.push_str(&String::from_utf8_lossy(&bytes));
+        }
+        state
+            .sessions
+            .lock()
+            .unwrap()
+            .remove("fixture")
+            .unwrap()
+            .kill();
+        drop(pair.slave);
+        assert!(
+            ready && wrote && echoed,
+            "Local PTY did not display the inserted command"
+        );
+        assert_eq!(
+            output.matches("WTERM_INPUT_ONLY").count(),
+            1,
+            "The inserted command must remain unsubmitted"
+        );
+    }
 }
 
 #[tauri::command]
@@ -218,8 +382,8 @@ async fn close_session(app: tauri::AppHandle, id: String) -> Result<(), String> 
 }
 
 #[tauri::command]
-fn list_ssh_profiles() -> Vec<SshProfile> {
-    profiles::load()
+fn list_ssh_profiles() -> Result<Vec<SshProfile>, String> {
+    profiles::load_with_ids().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -445,11 +609,7 @@ fn write_session_bytes(
     id: String,
     data: Vec<u8>,
 ) -> Result<(), String> {
-    let sessions = state.sessions.lock().unwrap();
-    if let Some(s) = sessions.get(&id) {
-        s.write(&data).map_err(|e| e.to_string())?;
-    }
-    Ok(())
+    write_input(&state, &id, &data)
 }
 
 #[tauri::command]
@@ -491,6 +651,15 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .manage(AppState::new())
+        .manage(ai::AiRequests::default())
+        .on_window_event(|window, event| {
+            if matches!(event, tauri::WindowEvent::Destroyed) {
+                use tauri::Manager;
+                window
+                    .state::<ai::AiRequests>()
+                    .cancel_window(window.label());
+            }
+        })
         .manage(crate::startup::LaunchDirectory::from_process())
         .invoke_handler(tauri::generate_handler![
             list_available_shells,
@@ -498,6 +667,15 @@ pub fn run() {
             credentials::credential_get,
             credentials::credential_set,
             credentials::credential_delete,
+            ai::ai_chat,
+            ai::ai_cancel,
+            ai::ai_models,
+            crate::ai_history::ai_history_list,
+            crate::ai_history::ai_history_get,
+            crate::ai_history::ai_history_recent,
+            crate::ai_history::ai_history_save,
+            crate::ai_history::ai_history_delete,
+            crate::ai_history::ai_history_open,
             windowing::open_external_target,
             windowing::open_downloaded_file,
             windowing::open_local_terminal_path,
@@ -512,6 +690,7 @@ pub fn run() {
             remove_known_host,
             write_session,
             write_session_bytes,
+            insert_terminal_input,
             write_sessions_bytes,
             resize_session,
             close_session,

@@ -35,6 +35,13 @@ const server = new Server({ hostKeys: [host.private] }, client => {
   });
   client.on('ready', () => client.on('session', accept => {
     const session = accept();
+    session.on('pty', acceptPty => acceptPty?.());
+    session.on('shell', acceptShell => {
+      const stream = acceptShell();
+      stream.write('fixture> ');
+      // Echo input bytes only: this fixture never executes received commands.
+      stream.on('data', data => stream.write(data));
+    });
     session.on('exec', acceptExec => { const stream = acceptExec(); stream.end('authenticated\n'); });
     session.on('sftp', acceptSftp => {
       const sftp = acceptSftp();

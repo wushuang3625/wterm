@@ -89,6 +89,114 @@ async fn ordinary_password_login_still_works() {
 }
 
 #[tokio::test]
+async fn ai_insertion_reaches_original_and_reused_ssh_channels_without_submitting() {
+    let (client, server, _) = connection(true).await;
+    drop(client);
+    let state = crate::state::AppState::default();
+    let pending = state.host_key_pending.clone();
+    let (events, mut output) = tokio::sync::mpsc::unbounded_channel();
+    let app = crate::events::EventSink::new(move |name, payload| {
+        if name.starts_with("pty-output-") || name.starts_with("pty-closed-") {
+            let bytes = serde_json::from_value::<Vec<u8>>(payload).unwrap_or_default();
+            let _ = events.send((name.to_owned(), bytes));
+        }
+        Ok(())
+    });
+    let opts = crate::ssh::SshConnectOpts {
+        host: "127.0.0.1".into(),
+        port: server.1,
+        username: "fixture".into(),
+        password: Some("test-password".into()),
+        private_key: None,
+        passphrase: None,
+        auth_channel: crate::events::Channel::new(|_| Err("Unexpected auth prompt".into())),
+        host_key_channel: crate::events::Channel::new(
+            move |challenge: crate::ssh::HostKeyChallenge| {
+                let reply = pending
+                    .lock()
+                    .unwrap()
+                    .remove(&challenge.request_id)
+                    .unwrap();
+                let _ = reply.send(Some("once".into()));
+                Ok(())
+            },
+        ),
+        keepalive_secs: 0,
+        auth: "password".into(),
+        proxy_jump: None,
+        use_keychain: false,
+    };
+    async fn receive(
+        output: &mut tokio::sync::mpsc::UnboundedReceiver<(String, Vec<u8>)>,
+        name: &str,
+        needle: &[u8],
+    ) -> Vec<u8> {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let mut received = Vec::new();
+            loop {
+                let (event, bytes) = output.recv().await.expect("Terminal output closed");
+                if event != name {
+                    continue;
+                }
+                received.extend(bytes);
+                if needle.is_empty() || received.windows(needle.len()).any(|value| value == needle)
+                {
+                    return received;
+                }
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("Terminal input was not echoed for {name}: {needle:?}"))
+    }
+    crate::ssh::connect(app.clone(), &state, "ai-original".into(), opts, 80, 24)
+        .await
+        .unwrap();
+    receive(&mut output, "pty-output-ai-original", b"fixture> ").await;
+    crate::ssh::connect_on_existing(app, &state, "ai-original", "ai-reused".into(), 80, 24)
+        .await
+        .unwrap();
+    receive(&mut output, "pty-output-ai-reused", b"fixture> ").await;
+    for (id, bracketed) in [("ai-original", false), ("ai-reused", true)] {
+        let text = "echo AI_INPUT_ONLY";
+        crate::webview::insert_input(&state, id, text, bracketed)
+            .await
+            .unwrap();
+        let expected = if bracketed {
+            format!("\x1b[200~{text}\x1b[201~")
+        } else {
+            text.to_owned()
+        };
+        let received = receive(
+            &mut output,
+            &format!("pty-output-{id}"),
+            expected.as_bytes(),
+        )
+        .await;
+        assert_eq!(received, expected.as_bytes());
+        assert!(!received.contains(&b'\r') && !received.contains(&b'\n'));
+    }
+    state
+        .sessions
+        .lock()
+        .unwrap()
+        .get("ai-original")
+        .unwrap()
+        .kill();
+    receive(&mut output, "pty-closed-ai-original", b"").await;
+    let error = crate::webview::insert_input(&state, "ai-original", "echo closed", false)
+        .await
+        .unwrap_err();
+    assert!(error.contains("SSH 通道已结束"), "{error}");
+    state
+        .sessions
+        .lock()
+        .unwrap()
+        .get("ai-reused")
+        .unwrap()
+        .kill();
+}
+
+#[tokio::test]
 async fn agent_signature_then_mfa_uses_no_client_private_key() {
     let (mut client, server, _) = connection(false).await;
     #[cfg(windows)]

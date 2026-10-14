@@ -2,7 +2,7 @@
 const SERVICE: &str = "dev.wterm.app";
 
 fn entry(kind: &str, key: &str) -> Result<keyring::Entry, String> {
-    if !matches!(kind, "password" | "passphrase") {
+    if !matches!(kind, "password" | "passphrase" | "api_key") {
         return Err("不支持的凭据类型".to_string());
     }
     if key.is_empty() || key.len() > 2048 || key.chars().any(|c| c.is_control()) {

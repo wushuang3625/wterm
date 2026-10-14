@@ -28,6 +28,12 @@ const DEFAULT_SETTINGS: Settings = {
   wterm_sftp_follow: 'false',
   wterm_sftp_queue_collapsed: 'false',
   wterm_favorites_v1: '[]',
+  wterm_ai_provider: '',
+  wterm_ai_protocol: 'openai',
+  wterm_ai_base_url: '',
+  wterm_ai_models: '[]',
+  wterm_ai_active_model: '',
+  wterm_ai_auto_diagnose: 'false',
 };
 const isPreference = (key: string) => key.startsWith('wterm_') &&
   !key.includes('workspace') && !key.includes('transfer') && key !== 'wterm_recent_connections';
