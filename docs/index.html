@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="wterm 将本地终端、SSH、SFTP 与可选 AI 助手整合在一个桌面工作台。连接服务器、管理文件，保持工作的上下文。">
+  <meta name="theme-color" content="#f5f4ef">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="wterm — 本地与远端，尽在一个工作台">
+  <meta property="og:description" content="本地终端、SSH、SFTP 与可选 AI 助手。一个专注连接与工作的桌面空间。">
+  <meta property="og:url" content="https://wushuang3625.github.io/wterm/">
+  <meta property="og:image" content="https://wushuang3625.github.io/wterm/assets/wterm.png">
+  <link rel="canonical" href="https://wushuang3625.github.io/wterm/">
+  <link rel="icon" href="./assets/wterm.png" type="image/png">
+  <link rel="stylesheet" href="./assets/site.css">
+  <script src="./assets/site.js" defer></script>
+  <title>wterm — 本地与远端，尽在一个工作台</title>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-i18n="skip">跳转到主要内容</a>
+  <header class="site-header shell">
+    <a class="brand" href="#" aria-label="wterm"><img src="./assets/wterm.png" width="32" height="32" alt=""><span>wterm<span class="brand-dot">.</span></span></a>
+    <nav aria-label="主导航" data-label="nav">
+      <a href="#features" data-i18n="navFeatures">功能</a><a href="#workflow" data-i18n="navWorkflow">工作方式</a><a href="#download" data-i18n="navDownload">开始使用</a>
+    </nav>
+    <div class="header-actions">
+      <button class="quiet-button language-button" type="button" data-label="language" aria-label="切换到英文">EN</button>
+      <button class="quiet-button theme-button" type="button" data-label="theme" aria-label="切换到深色主题"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.1A8.1 8.1 0 0 1 9.9 4a8.1 8.1 0 1 0 10.1 10.1Z"/></svg></button>
+      <a class="github-link" href="https://github.com/wushuang3625/wterm" aria-label="GitHub"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 19c-4.3 1.3-4.3-2.2-6-2.7m12 5v-3.4a3 3 0 0 0-.8-2.3c2.7-.3 5.6-1.3 5.6-6A4.6 4.6 0 0 0 18.5 6a4.3 4.3 0 0 0-.1-3.5S17.3 2.2 15 3.8a12 12 0 0 0-6 0C6.7 2.2 5.6 2.5 5.6 2.5A4.3 4.3 0 0 0 5.5 6a4.6 4.6 0 0 0-1.3 3.6c0 4.7 2.9 5.7 5.6 6a3 3 0 0 0-.8 2.3v3.4"/></svg></a>
+    </div>
+  </header>
+  <main id="main">
+    <section class="hero shell" aria-labelledby="hero-title">
+      <div class="hero-copy">
+        <p class="eyebrow"><span class="status-dot"></span><span data-i18n="eyebrow">为日常连接而造</span><span class="edition">DESKTOP / 01</span></p>
+        <h1 id="hero-title" data-i18n="heroTitle">本地与远端，<br><em>尽在一个工作台。</em></h1>
+        <p class="hero-description" data-i18n="heroDescription">连接服务器、管理文件、理解命令与输出。让本地终端、SSH、SFTP 和 AI 助手，在同一个空间各司其职。</p>
+        <div class="hero-actions"><a class="button button-primary" href="https://github.com/wushuang3625/wterm/releases/latest"><span data-i18n="downloadWindows">下载 Windows 版</span><span aria-hidden="true">↘</span></a><a class="text-link" href="https://github.com/wushuang3625/wterm" data-i18n="viewSource">查看源码 ↗</a></div>
+        <p class="version-note" data-i18n="versionNote">当前源码 v0.1.6 · 安装包以 GitHub Releases 为准</p>
+      </div>
+      <figure class="product-figure">
+        <div class="demo-window">
+          <div class="window-title"><div class="window-dots" aria-hidden="true"><i></i><i></i><i></i></div><span>wterm</span><span class="window-label" data-i18n="illustration">交互界面示意</span></div>
+          <div class="workspace-tabs" role="tablist" aria-label="工作台界面" data-label="preview">
+            <button type="button" role="tab" id="tab-terminal" aria-controls="panel-terminal" aria-selected="true" tabindex="0" data-panel="terminal"><span class="tab-dot"></span>SSH</button>
+            <button type="button" role="tab" id="tab-files" aria-controls="panel-files" aria-selected="false" tabindex="-1" data-panel="files">SFTP</button>
+            <button type="button" role="tab" id="tab-ai" aria-controls="panel-ai" aria-selected="false" tabindex="-1" data-panel="ai" data-i18n="aiTab">AI 助手</button>
+            <span class="demo-host">dev / workspace</span>
+          </div>
+          <div class="demo-panel terminal-panel" id="panel-terminal" role="tabpanel" aria-labelledby="tab-terminal" tabindex="0">
+            <aside class="connection-tree" aria-label="演示连接" data-label="connections"><span class="tree-label" data-i18n="workspace">工作空间</span><span class="tree-group">⌄ development</span><span class="tree-active"><i></i> dev-server</span><span class="tree-item"><i></i> staging</span><span class="tree-item">› local shell</span><div class="tree-bottom">SSH · 22</div></aside>
+            <div class="terminal-content"><p class="terminal-muted">Connecting to dev@demo.example…</p><p><span class="terminal-green">✓</span> Connected with public key</p><p class="terminal-path">~/workspace</p><p><span class="prompt">❯</span> git status --short</p><p class="terminal-muted"> M src/main.ts<br> M src/styles.css</p><p class="terminal-path">~/workspace</p><p><span class="prompt">❯</span> npm run build</p><p class="terminal-muted">Building for production…</p><p class="terminal-green">✓ Build completed.</p><p class="terminal-path">~/workspace</p><p><span class="prompt">❯</span><span class="cursor" aria-hidden="true"></span></p></div>
+          </div>
+          <div class="demo-panel files-panel" id="panel-files" role="tabpanel" aria-labelledby="tab-files" tabindex="0" hidden>
+            <div class="file-path"><span aria-hidden="true">⌂ /</span> home / dev / workspace <span class="file-protocol">SFTP</span></div>
+            <table class="file-table"><thead><tr><th data-i18n="fileName">名称</th><th data-i18n="fileSize">大小</th><th data-i18n="filePermissions">权限</th></tr></thead><tbody><tr><td><span class="folder-icon">▱</span> src</td><td>—</td><td>drwxr-xr-x</td></tr><tr><td><span class="folder-icon">▱</span> assets</td><td>—</td><td>drwxr-xr-x</td></tr><tr class="selected-file"><td><span class="file-icon">≡</span> README.md</td><td>8.2 KB</td><td>-rw-r--r--</td></tr><tr><td><span class="file-icon">≡</span> package.json</td><td>1.4 KB</td><td>-rw-r--r--</td></tr><tr><td><span class="file-icon">≡</span> tauri.conf.json</td><td>1.1 KB</td><td>-rw-r--r--</td></tr></tbody></table>
+            <div class="transfer-row"><span class="transfer-check">✓</span><div><strong>README.md</strong><span data-i18n="transferComplete">下载完成 · 可打开文件或所在目录</span></div><span class="transfer-size">8.2 KB</span></div>
+          </div>
+          <div class="demo-panel ai-panel" id="panel-ai" role="tabpanel" aria-labelledby="tab-ai" tabindex="0" hidden>
+            <aside class="conversation-tree"><span class="tree-label" data-i18n="conversations">会话</span><span class="conversation-active" data-i18n="explainJump">解释跳板连接</span><span data-i18n="reviewOutput">理解命令输出</span><span data-i18n="diagnoseIssue">排查连接问题</span></aside>
+            <div class="ai-conversation"><p class="demo-question" data-i18n="aiQuestion">ssh -J 是做什么的？</p><details class="demo-thinking"><summary data-i18n="thinking">思考过程</summary><p data-i18n="thinkingNote">模型返回思考文本或摘要时，可在这里按需展开查看。</p></details><p data-i18n="aiAnswer">通过跳板主机，再连接目标服务器。适合需要经过堡垒机的环境。</p><pre><code>ssh -J jump.example dev@target.example</code></pre><p class="ai-control-note" data-i18n="aiControl">命令由你审阅和执行。</p><div class="demo-composer" data-i18n="composer">提个问题，或带入选中的终端内容…</div></div>
+          </div>
+          <div class="window-status"><span><i></i><span data-i18n="demoStatus">示意内容 · 不连接真实服务器</span></span><span>UTF-8</span></div>
+        </div>
+        <figcaption><span data-i18n="previewCaption">一处工作台，三种视角。</span><span data-i18n="previewHint">点击上方标签切换 ↗</span></figcaption>
+      </figure>
+    </section>
+    <div class="tech-strip shell"><span data-i18n="foundation">熟悉的技术，专注的桌面体验</span><div><span>RUST</span><span>TAURI 2</span><span>TYPESCRIPT</span><span>XTERM.JS</span></div></div>
+    <section class="features shell section-space" id="features" aria-labelledby="features-title">
+      <div class="section-heading"><div><p class="eyebrow">01 / CAPABILITIES</p><h2 id="features-title" data-i18n="featuresTitle">工具各司其职。<br>工作保持连贯。</h2></div><p data-i18n="featuresDescription">从本地调试到远端排障，把连接、文件和上下文留在同一个工作空间。</p></div>
+      <div class="feature-columns">
+        <article><span class="feature-symbol" aria-hidden="true">⌁</span><h3 data-i18n="connectionsTitle">连接，有条不紊</h3><p data-i18n="connectionsText">用标签与分屏安排本地 Shell 和远端会话，按组管理常用连接。</p><ul><li data-i18n="connectionsOne">多跳 ProxyJump 与 SSH 通道复用</li><li data-i18n="connectionsTwo">系统 ssh-agent、密钥及多轮 MFA</li><li data-i18n="connectionsThree">主机指纹确认与连接历史</li></ul></article>
+        <article><span class="feature-symbol" aria-hidden="true">▱</span><h3 data-i18n="filesTitle">文件，就在手边</h3><p data-i18n="filesText">在 SFTP 面板浏览、编辑和传输远端文件，让文件操作贴近当前会话。</p><ul><li data-i18n="filesOne">上传、下载及远端编辑回传</li><li data-i18n="filesTwo">传输队列、暂停、继续与重试</li><li data-i18n="filesThree">下载后打开文件或定位目录</li></ul></article>
+        <article><span class="feature-symbol feature-ai" aria-hidden="true">✳</span><h3 data-i18n="aiTitle">AI，按需加入</h3><p data-i18n="aiText">带上你选中的内容，让 AI 辅助解释命令、整理输出或排查问题。</p><ul><li data-i18n="aiOne">自选服务商与模型，自带 API Key</li><li data-i18n="aiTwo">本机会话历史、按连接分组</li><li data-i18n="aiThree">并行聊天与可折叠思考过程</li></ul><a class="small-link" href="https://github.com/wushuang3625/wterm/blob/main/docs/ai-history.md" data-i18n="aiAvailability">AI 功能见当前源码与版本说明 ↗</a></article>
+      </div>
+    </section>
+    <section class="workflow section-space" id="workflow" aria-labelledby="workflow-title"><div class="shell workflow-layout">
+      <div class="workflow-copy"><p class="eyebrow">02 / IN THE FLOW</p><h2 id="workflow-title" data-i18n="workflowTitle">保持上下文，<br><em>接着往下做。</em></h2><p data-i18n="workflowText">重新打开工作台，找回标签、分屏与近期文字历史。需要的时候，再打开命令历史和 AI 助手。</p><p class="fine-print" data-i18n="historyNote">恢复的是布局与文字记录，不会重放命令或恢复旧进程。</p></div>
+      <ol class="workflow-steps"><li><span class="step-number">01</span><div><h3 data-i18n="stepConnect">找到这次要去的地方</h3><p data-i18n="stepConnectText">快速查找已保存的连接，或打开一个本地终端。</p></div><kbd>Ctrl P</kbd></li><li><span class="step-number">02</span><div><h3 data-i18n="stepFiles">让文件跟上工作</h3><p data-i18n="stepFilesText">在当前 SSH 会话旁打开远端文件面板。</p></div><kbd>Ctrl ⇧ R</kbd></li><li><span class="step-number">03</span><div><h3 data-i18n="stepAi">需要思路时，问一句</h3><p data-i18n="stepAiText">按需展开 AI 助手，保留对话，再回到终端。</p></div><kbd>Ctrl ⇧ K</kbd></li></ol>
+    </div></section>
+    <section class="download-section shell section-space" id="download" aria-labelledby="download-title"><div class="download-surface">
+      <div class="download-copy"><p class="eyebrow">03 / GET STARTED</p><h2 id="download-title" data-i18n="downloadTitle">从下一次连接开始。</h2><p data-i18n="downloadText">下载已发布的 Windows 安装包，或从源码开始探索。</p><div class="download-actions"><a class="button button-light" href="https://github.com/wushuang3625/wterm/releases/latest"><span data-i18n="downloadRelease">前往最新发布版</span><span aria-hidden="true">↗</span></a><a class="download-source" href="https://github.com/wushuang3625/wterm/blob/main/README.zh-CN.md#从源码运行" data-source-link data-i18n="buildSource">从源码运行 ↗</a></div><p class="release-note" data-i18n="releaseNote">推荐 Windows x64 NSIS 安装包。当前源码为 v0.1.6，已发布安装包的功能以对应 Release 为准。</p></div>
+      <div class="source-snippet"><div class="snippet-heading"><span data-i18n="cloneLabel">把源码带到本地</span><span aria-hidden="true">⌘</span></div><code id="clone-command">git clone https://github.com/wushuang3625/wterm.git</code><button class="copy-button" type="button" data-i18n="copy">复制命令</button><span class="copy-status" role="status" aria-live="polite"></span><div class="source-facts"><span data-i18n="sourceFactOne">本地 Shell + SSH + SFTP</span><span data-i18n="sourceFactTwo">可选 AI · 自带 API Key</span></div></div>
+    </div></section>
+    <section class="faq shell section-space" aria-labelledby="faq-title"><div><p class="eyebrow">A FEW DETAILS</p><h2 id="faq-title" data-i18n="faqTitle">开始之前。</h2></div><div class="faq-list">
+      <details><summary data-i18n="platformQuestion">支持哪些平台？</summary><p data-i18n="platformAnswer">当前提供经过本机验证的 Windows x64 安装包，依赖 Microsoft Edge WebView2。其他平台的安装包与验证范围请查看 Releases；源码包含 macOS 与 Linux 的平台适配。</p></details>
+      <details><summary data-i18n="privacyQuestion">AI 助手如何处理我的内容？</summary><p data-i18n="privacyAnswer">AI 可按需配置，不影响终端功能。请求会将你的问题、显式附带的片段和有限对话历史发送至所选服务商；自动失败诊断默认关闭。Key 存在系统凭据库，会话历史以未加密形式保存在本机。服务商可能按 API 用量收费。</p></details>
+      <details><summary data-i18n="scopeQuestion">AI 可以直接执行命令吗？</summary><p data-i18n="scopeAnswer">当前由你审阅建议并决定执行。单行命令可以插入匹配连接的终端，不自动按下回车。工具执行器、AI 自动分屏和外部 MCP 接入仍在规划中。</p></details>
+      <details><summary data-i18n="installQuestion">安装时需要注意什么？</summary><p data-i18n="installAnswer">当前安装包未签名。Windows 11 资源管理器右键菜单还需要满足身份包注册要求，注册失败不影响主程序使用。安装步骤和版本限制请查看对应发布说明。</p></details>
+    </div></section>
+  </main>
+  <footer class="site-footer shell"><a class="brand" href="#"><img src="./assets/wterm.png" width="28" height="28" alt=""><span>wterm<span class="brand-dot">.</span></span></a><span class="footer-note" data-i18n="footerNote">为专注的每一次连接。</span><nav aria-label="更多链接" data-label="footerNav"><a href="https://github.com/wushuang3625/wterm">GitHub ↗</a><a href="https://github.com/wushuang3625/wterm/releases">Releases ↗</a><a href="https://github.com/wushuang3625/wterm/issues" data-i18n="feedback">反馈问题 ↗</a></nav></footer>
+</body>
+</html>

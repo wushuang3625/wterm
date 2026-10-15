@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://wushuang3625.github.io/wterm/sitemap.xml

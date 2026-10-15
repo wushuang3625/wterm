@@ -10,6 +10,7 @@
   </p>
   <p>
     <a href="README.zh-CN.md">简体中文</a> · <a href="README.md">English</a> ·
+    <a href="https://wushuang3625.github.io/wterm/">Website</a> ·
     <a href="https://github.com/wushuang3625/wterm/releases">Download</a> ·
     <a href="https://github.com/wushuang3625/wterm/issues">Issues</a>
   </p>
